@@ -87,7 +87,7 @@ def test_msi_download():
     try:
         msi_url = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
         
-        # Test HEAD request first (faster)
+        # Test HEAD request with redirects allowed
         response = requests.head(msi_url, timeout=10, allow_redirects=True)
         
         if response.status_code == 200:
@@ -183,7 +183,10 @@ sys.exit(0)
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         
         if result.returncode == 0:
-            exe_path = Path("test_dist") / "test_build.exe"
+            # Check for executable (Linux: no extension, Windows: .exe)
+            exe_name = "test_build.exe" if os.name == 'nt' else "test_build"
+            exe_path = Path("test_dist") / exe_name
+            
             if exe_path.exists():
                 size = exe_path.stat().st_size / (1024 * 1024)
                 print(f"✅ Test build successful: {size:.2f} MB")
@@ -200,10 +203,13 @@ sys.exit(0)
                 
                 return True
             else:
-                print("❌ Test executable not created")
+                print(f"❌ Test executable not created: {exe_path}")
+                print(f"   Available files in test_dist: {list(Path('test_dist').iterdir()) if Path('test_dist').exists() else 'Directory not found'}")
                 return False
         else:
-            print(f"❌ Test build failed: {result.stderr}")
+            print(f"❌ Test build failed:")
+            print(f"   STDOUT: {result.stdout}")
+            print(f"   STDERR: {result.stderr}")
             return False
             
     except subprocess.TimeoutExpired:
