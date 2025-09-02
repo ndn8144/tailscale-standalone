@@ -1,8 +1,3 @@
-# build_installer_working.py - Final working version
-"""
-Phase 2: Build standalone installer - ALL BUGS FIXED
-"""
-
 import os
 import sys
 import base64
@@ -13,10 +8,15 @@ from datetime import datetime
 import json
 import shutil
 from pathlib import Path
+from dotenv import load_dotenv
+from string import Template
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Add to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from src.config import config
+from config import config
 
 class WorkingInstallerBuilder:
     def __init__(self):
@@ -27,19 +27,19 @@ class WorkingInstallerBuilder:
         self.build_dir.mkdir(exist_ok=True)
         self.temp_dir.mkdir(exist_ok=True)
     
-    def load_manual_auth_key(self, key_file="manual_auth_key.txt"):
-        """Load auth key from manual file"""
-        key_path = Path(key_file)
+    def load_auth_key(self):
+        """Load auth key from environment variable"""
+        auth_key = os.getenv('TAILSCALE_AUTH_KEY')
         
-        if not key_path.exists():
-            raise Exception(f"Manual auth key file not found: {key_file}")
+        if not auth_key:
+            raise Exception("TAILSCALE_AUTH_KEY environment variable not found. Please set it in your .env file.")
         
-        auth_key = key_path.read_text().strip()
+        auth_key = auth_key.strip()
         
         if not auth_key.startswith('tskey-auth-'):
-            raise Exception(f"Invalid auth key format in {key_file}")
+            raise Exception("Invalid auth key format. Auth key should start with 'tskey-auth-'")
         
-        print(f"✅ Manual auth key loaded: {auth_key[:30]}...")
+        print(f"✅ Auth key loaded from environment: {auth_key[:30]}...")
         return auth_key
     
     def download_tailscale_msi(self):
@@ -117,12 +117,12 @@ import winreg
 from pathlib import Path
 
 # Embedded configuration
-AUTH_KEY = "{auth_key}"
-BUILD_TIMESTAMP = "{build_timestamp}"
+AUTH_KEY = "$auth_key"
+BUILD_TIMESTAMP = "$build_timestamp"
 
 # Embedded MSI data
 MSI_DATA = base64.b64decode("""
-{msi_data_b64}
+$msi_data_b64
 """)
 
 class TailscaleInstaller:
@@ -415,7 +415,7 @@ class TailscaleInstaller:
     def install(self):
         """Main installation process"""
         print("=" * 60)
-        print("🚀 ATT TAILSCALE STANDALONE INSTALLER")
+        print("ATT TAILSCALE STANDALONE INSTALLER")
         print("=" * 60)
         print(f"Build: {BUILD_TIMESTAMP}")
         print(f"Auth Key: {AUTH_KEY[:30]}...")
@@ -436,30 +436,30 @@ class TailscaleInstaller:
             status = self.verify_installation()
             
             print("\\n" + "=" * 60)
-            print("✅ DEPLOYMENT SUCCESSFUL!")
-            print(f"🖥️  Device: {status['device_name']}")
+            print("DEPLOYMENT SUCCESSFUL!")
+            print(f"Device: {status['device_name']}")
             if status.get('tailscale_ip'):
-                print(f"🌐 Tailscale IP: {status['tailscale_ip']}")
-            print(f"🔄 Status: {status['status']}")
+                print(f"Tailscale IP: {status['tailscale_ip']}")
+            print(f"Status: {status['status']}")
             print("=" * 60)
-            print("\\n🎉 You are now connected to the ATT Tailnet!")
-            print("💡 Tailscale will start automatically on boot")
-            print("🔍 Check: https://login.tailscale.com/admin/machines")
+            print("\\nYou are now connected to the ATT Tailnet!")
+            print("Tailscale will start automatically on boot")
+            print("Check: https://login.tailscale.com/admin/machines")
             
             self.log("Deployment completed successfully")
             success = True
             
         except Exception as e:
-            print(f"\\n❌ DEPLOYMENT FAILED: {e}")
+            print(f"\\nDeployment FAILED: {e}")
             self.log(f"Deployment failed: {e}", "ERROR")
             
-            print("\\n🔧 TROUBLESHOOTING:")
+            print("\\nTROUBLESHOOTING:")
             print("1. Ensure internet connection")
             print("2. Check antivirus settings")
             print("3. Run as Administrator")
             print("4. Check Windows Installer service")
             print("5. Contact IT support")
-            print(f"\\n📋 Log: {self.log_file}")
+            print(f"\\nLog: {self.log_file}")
             
         finally:
             if msi_path:
@@ -472,19 +472,23 @@ def main():
     installer = TailscaleInstaller()
     success = installer.install()
     
-    print("\\n" + "=" * 60)
+    print("" + "=" * 60)
     if success:
-        print("✅ Installation completed!")
+        print("Installation completed!")
     else:
-        print("❌ Installation failed.")
+        print("Installation failed.")
     print("=" * 60)
     
-    input("\\nPress Enter to close...")
+    input("Press Enter to close...")
     return 0 if success else 1
 
 if __name__ == "__main__":
     sys.exit(main())
-'''.format(
+'''
+        
+        # Use Template to avoid brace escaping issues
+        template = Template(agent_code)
+        agent_code = template.substitute(
             auth_key=auth_key,
             build_timestamp=build_timestamp,
             msi_data_b64=msi_b64
@@ -500,7 +504,7 @@ if __name__ == "__main__":
         with open(agent_file, 'w', encoding='utf-8') as f:
             f.write(agent_code)
         
-        print("📦 Building executable with PyInstaller...")
+        print("Building executable with PyInstaller...")
         
         # FIXED: Remove problematic --add-data parameter
         cmd = [
@@ -515,13 +519,13 @@ if __name__ == "__main__":
             str(agent_file)                 # FIXED: No --add-data
         ]
         
-        print(f"🔨 Building (5-10 minutes)...")
+        print(f"Building (5-10 minutes)...")
         
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
             
             if result.returncode != 0:
-                print(f"❌ PyInstaller failed:")
+                print(f"PyInstaller failed:")
                 print(f"STDERR: {result.stderr}")
                 raise Exception("PyInstaller build failed")
             
@@ -531,7 +535,7 @@ if __name__ == "__main__":
                 raise Exception("Executable not found after build")
             
             exe_size = exe_path.stat().st_size / (1024 * 1024)  # MB
-            print(f"✅ Executable built: {exe_path} ({exe_size:.2f} MB)")
+            print(f"Executable built: {exe_path} ({exe_size:.2f} MB)")
             
             return exe_path
             
@@ -547,21 +551,21 @@ if __name__ == "__main__":
             timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             output_name = f"ATT-TailscaleInstaller-{timestamp}"
         
-        print("🚀 Building ATT Tailscale Standalone Installer")
+        print("Building ATT Tailscale Standalone Installer")
         print("=" * 60)
         
         try:
             # Steps
-            print("\\n1️⃣ Loading manual auth key...")
-            auth_key = self.load_manual_auth_key()
+            print("1 Loading auth key from environment...")
+            auth_key = self.load_auth_key()
             
-            print("\\n2️⃣ Downloading Tailscale MSI...")
+            print("2 Downloading Tailscale MSI...")
             msi_data = self.download_tailscale_msi()
             
-            print("\\n3️⃣ Creating agent code...")
+            print("3 Creating agent code...")
             agent_code = self.create_agent_template(auth_key, msi_data)
             
-            print("\\n4️⃣ Building executable...")
+            print("4 Building executable...")
             exe_path = self.build_executable(agent_code, output_name)
             
             # Build info
@@ -578,14 +582,14 @@ if __name__ == "__main__":
             with open(info_file, 'w') as f:
                 json.dump(build_info, f, indent=2)
             
-            print("\\n" + "=" * 60)
-            print("✅ BUILD COMPLETED SUCCESSFULLY!")
+            print("" + "=" * 60)
+            print("BUILD COMPLETED SUCCESSFULLY!")
             print("=" * 60)
-            print(f"📁 Installer: {exe_path}")
-            print(f"📊 Size: {build_info['exe_size_mb']} MB")
-            print(f"🔑 Auth Key: {auth_key[:30]}...")
+            print(f"Installer: {exe_path}")
+            print(f"Size: {build_info['exe_size_mb']} MB")
+            print(f"Auth Key: {auth_key[:30]}...")
             
-            print("\\n🧪 NEXT STEPS:")
+            print("NEXT STEPS:")
             print("1. Test on Windows VM")
             print("2. Right-click → 'Run as administrator'")
             print("3. Check device in Tailscale admin")
@@ -594,7 +598,7 @@ if __name__ == "__main__":
             return {"exe_path": exe_path, "build_info": build_info}
             
         except Exception as e:
-            print(f"\\n❌ Build failed: {e}")
+            print(f"Build failed: {e}")
             raise
 
 def main():
@@ -603,11 +607,11 @@ def main():
     
     try:
         result = builder.build_installer()
-        print(f"\\n🎉 SUCCESS!")
-        print(f"📁 {result['exe_path']}")
+        print(f"SUCCESS!")
+        print(f"Installer: {result['exe_path']}")
         return 0
     except Exception as e:
-        print(f"\\n❌ Failed: {e}")
+        print(f"Failed: {e}")
         return 1
 
 if __name__ == "__main__":

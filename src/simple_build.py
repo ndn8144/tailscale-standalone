@@ -1,8 +1,3 @@
-# simple_build.py - Simple version without template issues
-"""
-Simple standalone installer builder - NO TEMPLATE BUGS
-"""
-
 import os
 import sys
 import base64
