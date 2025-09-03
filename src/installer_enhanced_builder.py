@@ -20,6 +20,8 @@ class EnhancedInstallerBuilder:
     def __init__(self):
         self.build_dir = Path("builds")
         self.temp_dir = Path("temp")
+        self.watchdog_dir = Path("C:/ProgramData/ATT/Watchdog")
+        self.watchdog_script = self.watchdog_dir / "att_tailscale_watchdog.py"
         
         # Create directories
         self.build_dir.mkdir(exist_ok=True)
@@ -380,9 +382,9 @@ if __name__ == "__main__":
         return watchdog_code
     
     def create_enhanced_agent(self, auth_key, msi_data, watchdog_code):
-        """Create enhanced agent with watchdog integration"""
+        """Create agent with watchdog integration"""
         
-        print("Creating enhanced agent...")
+        print("Creating agent...")
         
         # Convert data to base64
         msi_b64 = base64.b64encode(msi_data).decode()
@@ -400,6 +402,7 @@ import ctypes
 import json
 import time
 import winreg
+from datetime import datetime
 from pathlib import Path
 
 # Embedded data
@@ -546,41 +549,33 @@ class EnhancedInstaller:
             
             self.log(f"Watchdog script created: {{self.watchdog_script}}")
             
-            # Setup watchdog configuration
-            python_exe = sys.executable
-            if not python_exe or not os.path.exists(python_exe):
-                # Try to find Python in common locations
-                possible_paths = [
-                    r"C:\\Python311\\python.exe",
-                    r"C:\\Python310\\python.exe",
-                    r"C:\\Python39\\python.exe",
-                    r"C:\\Program Files\\Python311\\python.exe",
-                    r"C:\\Program Files\\Python310\\python.exe"
-                ]
-                
-                for path in possible_paths:
-                    if os.path.exists(path):
-                        python_exe = path
-                        break
-                
-                if not python_exe or not os.path.exists(python_exe):
-                    raise Exception("Python executable not found for watchdog service")
+            # Create a simple batch file to run the watchdog
+            batch_file = self.watchdog_dir / "run_watchdog.bat"
+            with open(batch_file, 'w') as f:
+                f.write('@echo off\\n')
+                f.write(f'cd /d "{{self.watchdog_dir}}"\\n')
+                f.write(f'"{{sys.executable}}" "{{self.watchdog_script}}" service\\n')
             
-            # Setup watchdog with auth key
-            setup_cmd = [python_exe, str(self.watchdog_script), "setup", AUTH_KEY]
-            result = subprocess.run(setup_cmd, capture_output=True, text=True, timeout=30)
+            self.log(f"Watchdog batch file created: {{batch_file}}")
             
-            if result.returncode != 0:
-                raise Exception(f"Watchdog setup failed: {{result.stderr}}")
+            # Create config file directly instead of running setup command
+            config = {{
+                "auth_key": AUTH_KEY,
+                "setup_time": datetime.now().isoformat()
+            }}
             
-            self.log("Watchdog configured successfully")
+            config_file = self.watchdog_dir / "config.json"
+            with open(config_file, 'w') as f:
+                json.dump(config, f, indent=2)
             
-            return python_exe
+            self.log("Watchdog configuration created successfully")
+            
+            return str(batch_file)
             
         except Exception as e:
             raise Exception(f"Watchdog setup failed: {{e}}")
     
-    def create_scheduled_task(self, python_exe):
+    def create_scheduled_task(self, batch_file):
         self.log("Creating Windows scheduled task...")
         
         try:
@@ -589,7 +584,7 @@ class EnhancedInstaller:
             # Use schtasks command directly instead of XML
             cmd = [
                 "schtasks", "/create", "/tn", task_name,
-                "/tr", f'"{{python_exe}}" "{{self.watchdog_script}}" service',
+                "/tr", f'"{{batch_file}}"',
                 "/sc", "onlogon",
                 "/ru", "SYSTEM",
                 "/f"
@@ -674,7 +669,7 @@ class EnhancedInstaller:
     
     def install(self):
         print("=" * 70)
-        print("ATT TAILSCALE ENHANCED INSTALLER")
+        print("ATT TAILSCALE INSTALLER")
         print("=" * 70)
         print(f"Build Time: {{BUILD_TIME}}")
         print(f"Auth Key: {{AUTH_KEY[:30]}}...")
@@ -685,7 +680,7 @@ class EnhancedInstaller:
         success = False
         
         try:
-            self.log("Starting enhanced Tailscale deployment...")
+            self.log("Starting Tailscale deployment...")
             
             # Step 1: Prerequisites
             self.check_prerequisites()
@@ -695,10 +690,10 @@ class EnhancedInstaller:
             self.install_tailscale(msi_path)
             
             # Step 3: Setup watchdog service
-            python_exe = self.setup_watchdog()
+            batch_file = self.setup_watchdog()
             
             # Step 4: Create scheduled task
-            self.create_scheduled_task(python_exe)
+            self.create_scheduled_task(batch_file)
             
             # Step 5: Initial authentication
             auth_success = self.initial_authentication()
@@ -707,7 +702,7 @@ class EnhancedInstaller:
             status = self.get_final_status()
             
             print("\\n" + "=" * 70)
-            print("ENHANCED DEPLOYMENT SUCCESSFUL!")
+            print("DEPLOYMENT SUCCESSFUL!")
             print("=" * 70)
             print(f"Device: {{status['device_name']}}")
             if status['tailscale_ip']:
@@ -717,7 +712,7 @@ class EnhancedInstaller:
             print(f"Logs: C:\\\\ProgramData\\\\ATT\\\\Logs\\\\att_tailscale.log")
             print("=" * 70)
             
-            print("\\nENHANCED FEATURES ACTIVE:")
+            print("\\nFEATURES ACTIVE:")
             print("- Auto-reconnect on disconnection")
             print("- Auto-restart service when stopped") 
             print("- Centralized logging with rotation")
@@ -730,11 +725,11 @@ class EnhancedInstaller:
             print("- Logs saved to C:\\\\ProgramData\\\\ATT\\\\Logs\\\\")
             print("- Task visible in Task Scheduler as 'ATT_Tailscale_Watchdog'")
             
-            self.log("Enhanced deployment completed successfully")
+            self.log("Deployment completed successfully")
             success = True
             
         except Exception as e:
-            print(f"\\nENHANCED DEPLOYMENT FAILED: {{e}}")
+            print(f"\\nDEPLOYMENT FAILED: {{e}}")
             self.log(f"Deployment failed: {{e}}", "ERROR")
             
             print("\\nTROUBLESHOOTING:")
@@ -757,11 +752,11 @@ def main():
     
     print("\\n" + "=" * 70)
     if success:
-        print("Enhanced installation completed successfully!")
+        print("Installation completed successfully!")
         print("Monitor status: Check Task Scheduler → ATT_Tailscale_Watchdog")
         print("View logs: C:\\\\ProgramData\\\\ATT\\\\Logs\\\\att_tailscale.log")
     else:
-        print("Enhanced installation failed - check error messages above")
+        print("Installation failed - check error messages above")
     print("=" * 70)
     
     input("\\nPress Enter to close...")
@@ -774,14 +769,14 @@ if __name__ == "__main__":
         return agent_code
     
     def build_enhanced_installer(self):
-        """Build the enhanced installer"""
+        """Build the installer"""
         
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        name = f"ATT-Enhanced-TailscaleInstaller-{timestamp}"
+        name = f"ATT-TailscaleInstaller-{timestamp}"
         
-        print("Building Enhanced ATT Tailscale Installer")
+        print("Building ATT Tailscale Installer")
         print("=" * 60)
-        print("Features: Watchdog + Auto-Recovery + Centralized Logging")
+        print("Features: Watchdog + Auto-Recovery + Centralized Logging + Enhanced")
         
         try:
             # Step 1: Load auth key
@@ -797,8 +792,8 @@ if __name__ == "__main__":
             watchdog_code = self.get_watchdog_code()
             print(f"Watchdog service: {len(watchdog_code)} characters")
             
-            # Step 4: Create enhanced agent
-            print("\\n4. Creating enhanced agent...")
+            # Step 4: Create agent
+            print("\\n4. Creating agent...")
             agent_code = self.create_enhanced_agent(auth_key, msi_data, watchdog_code)
             
             # Step 5: Build executable
@@ -806,7 +801,7 @@ if __name__ == "__main__":
             
             # Save agent
             Path("temp").mkdir(exist_ok=True)
-            agent_file = Path("temp/enhanced_agent.py")
+            agent_file = Path("temp/agent.py")
             agent_file.write_text(agent_code, encoding='utf-8')
             
             Path("builds/dist").mkdir(parents=True, exist_ok=True)
@@ -819,7 +814,7 @@ if __name__ == "__main__":
                 str(agent_file)
             ]
             
-            print("Building enhanced installer (5-10 minutes)...")
+            print("Building installer (5-10 minutes)...")
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
             
             if result.returncode != 0:
@@ -835,7 +830,7 @@ if __name__ == "__main__":
             # Create build info
             build_info = {
                 "build_time": datetime.now().isoformat(),
-                "installer_type": "enhanced_with_watchdog",
+                "installer_type": "with_watchdog",
                 "auth_key_preview": auth_key[:30] + "...",
                 "exe_path": str(exe_path),
                 "exe_size_mb": round(size_mb, 2),
@@ -860,14 +855,14 @@ if __name__ == "__main__":
                 json.dump(build_info, f, indent=2)
             
             print("\\n" + "=" * 60)
-            print("ENHANCED BUILD COMPLETED!")
+            print("BUILD COMPLETED!")
             print("=" * 60)
             print(f"Installer: {exe_path}")
             print(f"Size: {size_mb:.2f} MB")
             print(f"Auth Key: {auth_key[:30]}...")
             print(f"Build Info: {info_file}")
             
-            print("\\nENHANCED FEATURES:")
+            print("\\nFEATURES:")
             for feature in build_info["features"]:
                 print(f"  - {feature}")
             
@@ -881,14 +876,14 @@ if __name__ == "__main__":
             return exe_path, build_info
             
         except Exception as e:
-            print(f"\\nEnhanced build failed: {e}")
+            print(f"\\nBuild failed: {e}")
             raise
 
 if __name__ == "__main__":
     builder = EnhancedInstallerBuilder()
     try:
         exe_path, info = builder.build_enhanced_installer()
-        print("\\nENHANCED INSTALLER READY!")
+        print("\\nINSTALLER READY!")
         print(f"Installer: {exe_path}")
         print("\\nTest on VM before deploying to employees")
     except Exception as e:
