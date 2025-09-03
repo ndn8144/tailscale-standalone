@@ -558,17 +558,36 @@ class EnhancedInstaller:
             
             self.log(f"Watchdog batch file created: {{batch_file}}")
             
-            # Create config file directly instead of running setup command
+            # Create config file in the correct location
             config = {{
                 "auth_key": AUTH_KEY,
-                "setup_time": datetime.now().isoformat()
+                "setup_time": datetime.now().isoformat(),
+                "check_interval": 30,
+                "auto_reconnect": True,
+                "accept_routes": True,
+                "advertise_tags": ["tag:employee"],
+                "unattended_mode": True
             }}
             
-            config_file = self.watchdog_dir / "config.json"
+            # Create config directory and file
+            config_dir = Path("C:/ProgramData/ATT/Config")
+            config_dir.mkdir(parents=True, exist_ok=True)
+            config_file = config_dir / "config.json"
             with open(config_file, 'w') as f:
                 json.dump(config, f, indent=2)
             
             self.log("Watchdog configuration created successfully")
+            
+            # Test watchdog initialization to ensure logging works
+            try:
+                test_cmd = [sys.executable, str(self.watchdog_script), "init"]
+                test_result = subprocess.run(test_cmd, capture_output=True, text=True, timeout=30)
+                if test_result.returncode == 0:
+                    self.log("Watchdog initialization test passed")
+                else:
+                    self.log(f"Watchdog initialization test warning: {{test_result.stderr}}")
+            except Exception as test_e:
+                self.log(f"Watchdog initialization test failed: {{test_e}}")
             
             return str(batch_file)
             

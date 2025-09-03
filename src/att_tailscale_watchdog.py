@@ -24,6 +24,7 @@ class Config:
     CONFIG_FILE = CONFIG_DIR / "config.json"
     AUTH_KEY_FILE = CONFIG_DIR / "auth_key.encrypted"
     
+    
     # Settings
     CHECK_INTERVAL = 30  # seconds
     RECONNECT_DELAY = 5   # seconds
@@ -39,6 +40,7 @@ class TailscaleLogger:
     """Centralized logging system"""
     
     def __init__(self):
+        self.logger = None
         self.setup_logging()
         
     def setup_logging(self):
@@ -74,23 +76,36 @@ class TailscaleLogger:
         # Configure root logger
         logging.basicConfig(
             level=logging.DEBUG,
-            handlers=[file_handler, console_handler]
+            handlers=[file_handler, console_handler],
+            force=True  # Force reconfiguration
         )
         
         self.logger = logging.getLogger('ATT.Tailscale')
         self.logger.info("=== ATT Tailscale Watchdog Started ===")
         
     def info(self, message, **kwargs):
-        self.logger.info(message, extra=kwargs)
+        if self.logger:
+            self.logger.info(message, extra=kwargs)
+        else:
+            print(f"[INFO] {message}")
         
     def warning(self, message, **kwargs):
-        self.logger.warning(message, extra=kwargs)
+        if self.logger:
+            self.logger.warning(message, extra=kwargs)
+        else:
+            print(f"[WARNING] {message}")
         
     def error(self, message, **kwargs):
-        self.logger.error(message, extra=kwargs)
+        if self.logger:
+            self.logger.error(message, extra=kwargs)
+        else:
+            print(f"[ERROR] {message}")
         
     def debug(self, message, **kwargs):
-        self.logger.debug(message, extra=kwargs)
+        if self.logger:
+            self.logger.debug(message, extra=kwargs)
+        else:
+            print(f"[DEBUG] {message}")
 
 class ConfigManager:
     """Secure configuration management"""
@@ -145,7 +160,7 @@ class TailscaleMonitor:
         self.is_running = False
         
     def get_tailscale_status(self):
-        """Get current Tailscale status"""
+        """Get current Tailscale status with improved error handling"""
         try:
             if not Config.TAILSCALE_EXE.exists():
                 return {"error": "Tailscale not installed", "status": "not_installed"}
@@ -156,21 +171,45 @@ class TailscaleMonitor:
             )
             
             if result.returncode == 0:
-                status = json.loads(result.stdout)
-                self.logger.debug(f"Tailscale status retrieved successfully")
-                return status
+                try:
+                    status = json.loads(result.stdout)
+                    self.logger.debug(f"Tailscale status retrieved successfully")
+                    
+                    # Add additional status information
+                    backend_state = status.get("BackendState", "Unknown")
+                    self_info = status.get("Self", {})
+                    
+                    # Check for disconnection indicators
+                    is_connected = (
+                        backend_state == "Running" and 
+                        self_info.get("TailscaleIPs") and 
+                        len(self_info.get("TailscaleIPs", [])) > 0
+                    )
+                    
+                    status["is_connected"] = is_connected
+                    status["has_ip"] = bool(self_info.get("TailscaleIPs"))
+                    status["device_name"] = self_info.get("HostName", "Unknown")
+                    
+                    return status
+                except json.JSONDecodeError as e:
+                    return {"error": f"Invalid JSON response: {e}", "status": "json_error"}
             else:
-                return {"error": f"Status check failed: {result.stderr}", "status": "error"}
+                # Check for specific error conditions
+                stderr_lower = result.stderr.lower()
+                if "not running" in stderr_lower or "not logged in" in stderr_lower:
+                    return {"error": "Tailscale not running or logged in", "status": "not_running"}
+                elif "permission denied" in stderr_lower:
+                    return {"error": "Permission denied - run as administrator", "status": "permission_denied"}
+                else:
+                    return {"error": f"Status check failed: {result.stderr}", "status": "error"}
                 
         except subprocess.TimeoutExpired:
             return {"error": "Status check timed out", "status": "timeout"}
-        except json.JSONDecodeError as e:
-            return {"error": f"Invalid JSON response: {e}", "status": "json_error"}
         except Exception as e:
             return {"error": f"Status check exception: {e}", "status": "exception"}
     
     def check_service_status(self):
-        """Check Windows service status"""
+        """Check Windows service status with improved detection"""
         try:
             result = subprocess.run(
                 ["sc", "query", Config.SERVICE_NAME],
@@ -183,9 +222,30 @@ class TailscaleMonitor:
                     return "running"
                 elif "STOPPED" in output:
                     return "stopped"
+                elif "START_PENDING" in output:
+                    return "starting"
+                elif "STOP_PENDING" in output:
+                    return "stopping"
+                elif "PAUSED" in output:
+                    return "paused"
                 else:
                     return "unknown"
             else:
+                # Try alternative method using Get-Service PowerShell command
+                try:
+                    ps_cmd = f"Get-Service -Name '{Config.SERVICE_NAME}' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Status"
+                    ps_result = subprocess.run(
+                        ["powershell", "-Command", ps_cmd],
+                        capture_output=True, text=True, timeout=10
+                    )
+                    if ps_result.returncode == 0:
+                        status = ps_result.stdout.strip().upper()
+                        if status == "RUNNING":
+                            return "running"
+                        elif status == "STOPPED":
+                            return "stopped"
+                except:
+                    pass
                 return "not_found"
                 
         except Exception as e:
@@ -193,21 +253,60 @@ class TailscaleMonitor:
             return "error"
     
     def start_service(self):
-        """Start Tailscale service"""
+        """Start Tailscale service with improved reliability"""
         try:
             self.logger.info("Starting Tailscale service...")
             
+            # First check if service is already running
+            current_status = self.check_service_status()
+            if current_status == "running":
+                self.logger.info("Tailscale service is already running")
+                return True
+            
+            # Start the service
             result = subprocess.run(
                 ["sc", "start", Config.SERVICE_NAME],
                 capture_output=True, text=True, timeout=60
             )
             
             if result.returncode == 0 or "already running" in result.stderr.lower():
-                self.logger.info("Tailscale service started successfully")
-                time.sleep(3)  # Wait for service to initialize
-                return True
+                self.logger.info("Tailscale service start command executed")
+                
+                # Wait and verify service actually started
+                for attempt in range(10):  # Wait up to 30 seconds
+                    time.sleep(3)
+                    status = self.check_service_status()
+                    if status == "running":
+                        self.logger.info("Tailscale service started successfully")
+                        return True
+                    elif status == "starting":
+                        self.logger.debug(f"Service starting... attempt {attempt + 1}")
+                        continue
+                    else:
+                        self.logger.warning(f"Service status: {status} (attempt {attempt + 1})")
+                
+                # If we get here, service didn't start properly
+                self.logger.error("Service did not start within expected time")
+                return False
             else:
                 self.logger.error(f"Failed to start service: {result.stderr}")
+                
+                # Try alternative method using PowerShell
+                try:
+                    self.logger.info("Trying PowerShell method to start service...")
+                    ps_cmd = f"Start-Service -Name '{Config.SERVICE_NAME}' -ErrorAction Stop"
+                    ps_result = subprocess.run(
+                        ["powershell", "-Command", ps_cmd],
+                        capture_output=True, text=True, timeout=30
+                    )
+                    if ps_result.returncode == 0:
+                        time.sleep(5)
+                        if self.check_service_status() == "running":
+                            self.logger.info("Service started successfully via PowerShell")
+                            return True
+                except Exception as ps_e:
+                    self.logger.error(f"PowerShell start failed: {ps_e}")
+                
                 return False
                 
         except Exception as e:
@@ -251,15 +350,31 @@ class TailscaleMonitor:
                 self.config["last_auth"] = datetime.now().isoformat()
                 self.config_manager.save_config(self.config)
                 
-                return True
+                # Wait a moment for the connection to establish
+                time.sleep(5)
+                
+                # Verify the connection was established
+                verify_status = self.get_tailscale_status()
+                if verify_status.get("is_connected", False):
+                    device_name = verify_status.get("device_name", "Unknown")
+                    self.logger.info(f"Connection verified - Device: {device_name}")
+                    return True
+                else:
+                    self.logger.warning("Authentication completed but connection not yet established")
+                    return True  # Still consider it successful, connection might take time
+                
             else:
                 self.logger.error(f"Authentication failed: {result.stderr}")
                 
                 # Check for specific errors
-                if "key expired" in result.stderr.lower():
+                stderr_lower = result.stderr.lower()
+                if "key expired" in stderr_lower:
                     self.logger.error("Auth key has expired - manual intervention required")
-                elif "invalid key" in result.stderr.lower():
+                elif "invalid key" in stderr_lower:
                     self.logger.error("Auth key is invalid - check configuration")
+                elif "already authenticated" in stderr_lower:
+                    self.logger.info("Already authenticated - checking connection status")
+                    return True  # This is actually a success case
                 
                 return False
                 
@@ -279,6 +394,37 @@ class TailscaleMonitor:
         except Exception:
             return False
     
+    def detect_manual_shutdown(self):
+        """Detect if Tailscale was manually stopped by user"""
+        try:
+            # Check if Tailscale process is running but service is stopped
+            # This might indicate manual shutdown
+            import psutil  # Optional dependency for process monitoring
+            
+            tailscale_processes = []
+            for proc in psutil.process_iter(['pid', 'name', 'exe']):
+                try:
+                    if proc.info['name'] and 'tailscale' in proc.info['name'].lower():
+                        tailscale_processes.append(proc.info)
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+            
+            service_status = self.check_service_status()
+            
+            # If service is stopped but processes are running, it might be manual shutdown
+            if service_status == "stopped" and tailscale_processes:
+                self.logger.warning("Detected potential manual Tailscale shutdown - processes running but service stopped")
+                return True
+                
+            return False
+            
+        except ImportError:
+            # psutil not available, skip this check
+            return False
+        except Exception as e:
+            self.logger.debug(f"Manual shutdown detection failed: {e}")
+            return False
+    
     def recovery_procedure(self, status_info):
         """Execute recovery procedures based on current status"""
         
@@ -286,19 +432,24 @@ class TailscaleMonitor:
         recovery_steps = []
         
         try:
-            # Step 1: Check network connectivity
+            # Step 1: Check for manual shutdown
+            if self.detect_manual_shutdown():
+                self.logger.info("Detected manual shutdown - will restart service")
+                recovery_steps.append("manual_shutdown_detected")
+            
+            # Step 2: Check network connectivity
             if not self.check_network_connectivity():
                 self.logger.warning("No internet connectivity - waiting for network")
                 recovery_steps.append("network_wait")
                 return False, recovery_steps
             
-            # Step 2: Check if Tailscale is installed
+            # Step 3: Check if Tailscale is installed
             if not Config.TAILSCALE_EXE.exists():
                 self.logger.error("Tailscale executable not found")
                 recovery_steps.append("reinstall_required")
                 return False, recovery_steps
             
-            # Step 3: Check and start service
+            # Step 4: Check and start service
             service_status = self.check_service_status()
             self.logger.debug(f"Service status: {service_status}")
             
@@ -308,32 +459,50 @@ class TailscaleMonitor:
                     self.logger.error("Failed to start Tailscale service")
                     return False, recovery_steps
             
-            # Step 4: Check Tailscale status after service start
+            # Step 5: Check Tailscale status after service start
             time.sleep(2)
             current_status = self.get_tailscale_status()
             
-            # Step 5: Authenticate if needed
+            # Step 6: Authenticate if needed
             backend_state = current_status.get("BackendState", "Unknown")
+            is_connected = current_status.get("is_connected", False)
             
-            if backend_state in ["NeedsLogin", "NoState", "Stopped"]:
+            # Check if authentication is needed
+            auth_needed = (
+                backend_state in ["NeedsLogin", "NoState", "Stopped", "not_running"] or
+                (backend_state == "Running" and not is_connected) or
+                current_status.get("status") in ["not_running", "permission_denied"]
+            )
+            
+            if auth_needed:
                 recovery_steps.append("authenticate")
                 if not self.authenticate_tailscale():
                     self.logger.error("Failed to authenticate Tailscale")
                     return False, recovery_steps
             
-            # Step 6: Final status check
+            # Step 7: Final status check
             time.sleep(3)
             final_status = self.get_tailscale_status()
             final_backend_state = final_status.get("BackendState", "Unknown")
+            final_is_connected = final_status.get("is_connected", False)
             
-            if final_backend_state == "Running":
-                self.logger.info("Recovery successful - Tailscale is running")
+            # Check if recovery was successful
+            recovery_successful = (
+                final_backend_state == "Running" and 
+                final_is_connected and
+                final_status.get("has_ip", False)
+            )
+            
+            if recovery_successful:
+                device_name = final_status.get("device_name", "Unknown")
+                tailscale_ip = final_status.get("Self", {}).get("TailscaleIPs", ["Unknown"])[0]
+                self.logger.info(f"Recovery successful - Tailscale connected: {device_name} ({tailscale_ip})")
                 self.consecutive_failures = 0
                 self.last_successful_check = datetime.now()
                 recovery_steps.append("success")
                 return True, recovery_steps
             else:
-                self.logger.warning(f"Recovery incomplete - Backend state: {final_backend_state}")
+                self.logger.warning(f"Recovery incomplete - Backend: {final_backend_state}, Connected: {final_is_connected}")
                 recovery_steps.append("partial_success")
                 return False, recovery_steps
                 
@@ -384,14 +553,32 @@ class TailscaleMonitor:
                         
                         self.logger.debug(f"Healthy connection - Device: {device_name}, IP: {tailscale_ip}")
             
-            # Determine if recovery is needed
+            # Determine if recovery is needed with improved conditions
             recovery_conditions = [
-                health_status["tailscale_status"] in ["NeedsLogin", "NoState", "Stopped", "error", "timeout"],
-                health_status["service_status"] in ["stopped", "not_found"],
-                not health_status["auth_valid"] and health_status["network_connectivity"]
+                # Tailscale backend issues
+                health_status["tailscale_status"] in ["NeedsLogin", "NoState", "Stopped", "error", "timeout", "not_running", "permission_denied"],
+                # Service issues
+                health_status["service_status"] in ["stopped", "not_found", "error"],
+                # Connection issues (has network but no valid auth/connection)
+                not health_status["auth_valid"] and health_status["network_connectivity"],
+                # Disconnected state (service running but no connection)
+                health_status["service_status"] == "running" and health_status["tailscale_status"] == "Running" and not health_status["auth_valid"]
             ]
             
             health_status["recovery_needed"] = any(recovery_conditions)
+            
+            # Add specific recovery reasons for better logging
+            recovery_reasons = []
+            if health_status["tailscale_status"] in ["NeedsLogin", "NoState", "Stopped", "error", "timeout", "not_running", "permission_denied"]:
+                recovery_reasons.append(f"tailscale_status: {health_status['tailscale_status']}")
+            if health_status["service_status"] in ["stopped", "not_found", "error"]:
+                recovery_reasons.append(f"service_status: {health_status['service_status']}")
+            if not health_status["auth_valid"] and health_status["network_connectivity"]:
+                recovery_reasons.append("no_valid_connection")
+            if health_status["service_status"] == "running" and health_status["tailscale_status"] == "Running" and not health_status["auth_valid"]:
+                recovery_reasons.append("disconnected_state")
+            
+            health_status["recovery_reasons"] = recovery_reasons
             
             # Log health status
             if health_status["recovery_needed"]:
@@ -421,8 +608,9 @@ class TailscaleMonitor:
                 # Execute recovery if needed
                 if health_status["recovery_needed"]:
                     self.consecutive_failures += 1
+                    recovery_reasons = health_status.get("recovery_reasons", ["unknown"])
                     
-                    self.logger.warning(f"Recovery needed (failure #{self.consecutive_failures})")
+                    self.logger.warning(f"Recovery needed (failure #{self.consecutive_failures}) - Reasons: {', '.join(recovery_reasons)}")
                     
                     # Exponential backoff for consecutive failures
                     if self.consecutive_failures > 1:
@@ -434,15 +622,15 @@ class TailscaleMonitor:
                     success, recovery_steps = self.recovery_procedure(health_status)
                     
                     if success:
-                        self.logger.info(f"Recovery successful after {recovery_steps}")
+                        self.logger.info(f"Recovery successful after steps: {', '.join(recovery_steps)}")
                         self.consecutive_failures = 0
                         self.last_successful_check = datetime.now()
                     else:
-                        self.logger.error(f"Recovery failed: {recovery_steps}")
+                        self.logger.error(f"Recovery failed after steps: {', '.join(recovery_steps)}")
                         
                         # If we've had too many consecutive failures, increase check interval
                         if self.consecutive_failures >= Config.MAX_RETRIES:
-                            self.logger.error(f"Max retries ({Config.MAX_RETRIES}) exceeded - increasing check interval")
+                            self.logger.error(f"Max retries ({Config.MAX_RETRIES}) exceeded - increasing check interval to 5 minutes")
                             time.sleep(300)  # Wait 5 minutes before next attempt
                 
                 else:
@@ -588,6 +776,14 @@ def main():
             else:
                 print("Usage: python att_tailscale_watchdog.py setup <auth_key>")
                 sys.exit(1)
+        
+        elif command == "init":
+            # Initialize logging and test basic functionality
+            watchdog = TailscaleWatchdog()
+            watchdog.logger.info("Watchdog initialization test completed")
+            print("✅ Watchdog initialized successfully")
+            print(f"Log file: {Config.LOG_FILE}")
+            sys.exit(0)
     
     # Default: run interactive mode
     print("ATT Tailscale Watchdog")
@@ -595,6 +791,7 @@ def main():
     print("  python att_tailscale_watchdog.py service [auth_key]  - Run as service")
     print("  python att_tailscale_watchdog.py setup <auth_key>    - Setup auth key")
     print("  python att_tailscale_watchdog.py test               - Test current status")
+    print("  python att_tailscale_watchdog.py init               - Initialize and test logging")
 
 if __name__ == "__main__":
     main()

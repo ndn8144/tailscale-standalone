@@ -18,3 +18,4 @@ pywin32>=306; sys_platform == "win32"
 # Optional: for advanced features
 click>=8.0.0
 colorama>=0.4.0
+psutil>=5.9.0
