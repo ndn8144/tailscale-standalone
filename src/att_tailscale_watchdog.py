@@ -399,7 +399,10 @@ class TailscaleMonitor:
         try:
             # Check if Tailscale process is running but service is stopped
             # This might indicate manual shutdown
-            import psutil  # Optional dependency for process monitoring
+            try:
+                import psutil  # type: ignore
+            except ImportError:
+                return False
             
             tailscale_processes = []
             for proc in psutil.process_iter(['pid', 'name', 'exe']):
@@ -418,9 +421,6 @@ class TailscaleMonitor:
                 
             return False
             
-        except ImportError:
-            # psutil not available, skip this check
-            return False
         except Exception as e:
             self.logger.debug(f"Manual shutdown detection failed: {e}")
             return False
