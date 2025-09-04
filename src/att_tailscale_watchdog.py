@@ -768,10 +768,10 @@ def main():
                 watchdog = TailscaleWatchdog()
                 
                 if watchdog.setup_auth_key(auth_key):
-                    print("✅ Auth key configured successfully")
+                    print("[OK] Auth key configured successfully")
                     sys.exit(0)
                 else:
-                    print("❌ Failed to configure auth key")
+                    print("[ERROR] Failed to configure auth key")
                     sys.exit(1)
             else:
                 print("Usage: python att_tailscale_watchdog.py setup <auth_key>")
@@ -781,7 +781,7 @@ def main():
             # Initialize logging and test basic functionality
             watchdog = TailscaleWatchdog()
             watchdog.logger.info("Watchdog initialization test completed")
-            print("✅ Watchdog initialized successfully")
+            print("[OK] Watchdog initialized successfully")
             print(f"Log file: {Config.LOG_FILE}")
             sys.exit(0)
     

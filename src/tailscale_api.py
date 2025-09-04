@@ -111,7 +111,7 @@ async def test_api():
     try:
         # Test token
         token = await api.get_access_token()
-        print(f"✅ Token obtained: {token[:20]}...")
+        print(f"[OK] Token obtained: {token[:20]}...")
         
         # Test create auth key
         key = await api.create_auth_key(
@@ -119,15 +119,15 @@ async def test_api():
             expires_days=1,
             description="API test key"
         )
-        print(f"✅ Auth key created: {key['id']}")
+        print(f"[OK] Auth key created: {key['id']}")
         print(f"Key: {key['key'][:20]}...")
         
         # Test list devices
         devices = await api.list_devices()
-        print(f"✅ Found {len(devices['devices'])} devices")
+        print(f"[OK] Found {len(devices['devices'])} devices")
         
     except Exception as e:
-        print(f"❌ API test failed: {e}")
+        print(f"[ERROR] API test failed: {e}")
 
 if __name__ == "__main__":
     asyncio.run(test_api())

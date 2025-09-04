@@ -215,7 +215,7 @@ class TailscaleInstaller:
     def install(self):
         """Main installation process"""
         print("=" * 60)
-        print("🚀 ATT TAILSCALE STANDALONE INSTALLER")
+        print("[BUILD] ATT TAILSCALE STANDALONE INSTALLER")
         print("=" * 60)
         
         msi_path = None
@@ -242,26 +242,26 @@ class TailscaleInstaller:
             status = self.verify_installation()
             
             print("\\n" + "=" * 60)
-            print("✅ DEPLOYMENT SUCCESSFUL!")
-            print(f"🖥️  Device: {status['device_name']}")
+            print("[SUCCESS] DEPLOYMENT SUCCESSFUL!")
+            print(f"[INFO] Device: {status['device_name']}")
             if status['tailscale_ip']:
-                print(f"🌐 Tailscale IP: {status['tailscale_ip']}")
+                print(f"[INFO] Tailscale IP: {status['tailscale_ip']}")
             print("=" * 60)
-            print("\\n🎉 You are now connected to the ATT Tailnet!")
-            print("💡 Tailscale will start automatically on boot")
+            print("\\n[SUCCESS] You are now connected to the ATT Tailnet!")
+            print("[INFO] Tailscale will start automatically on boot")
             
             self.log("Deployment completed successfully")
             
         except Exception as e:
-            print(f"\\n❌ DEPLOYMENT FAILED: {e}")
+            print(f"\\n[ERROR] DEPLOYMENT FAILED: {e}")
             self.log(f"Deployment failed: {e}", "ERROR")
             
-            print("\\n🔧 Troubleshooting:")
+            print("\\n[HELP] Troubleshooting:")
             print("1. Ensure you have internet connection")
             print("2. Check antivirus isn't blocking the installer")
             print("3. Try running again as Administrator")
             print("4. Contact IT support with this error message")
-            print(f"\\n📋 Log file: {self.log_file}")
+            print(f"\\n[INFO] Log file: {self.log_file}")
             
             return False
             

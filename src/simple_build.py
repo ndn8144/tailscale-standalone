@@ -29,12 +29,12 @@ class SimpleBuild:
         if not auth_key.startswith('tskey-auth-'):
             raise Exception("Invalid auth key format")
         
-        print(f"✅ Auth key loaded: {auth_key[:30]}...")
+        print(f"[OK] Auth key loaded: {auth_key[:30]}...")
         return auth_key
     
     def download_msi(self):
         """Download Tailscale MSI"""
-        print("📥 Downloading Tailscale MSI...")
+        print("[BUILD] Downloading Tailscale MSI...")
         
         url = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
         
@@ -50,7 +50,7 @@ class SimpleBuild:
         msi_data = b''
         total_size = int(response.headers.get('content-length', 0))
         
-        print(f"   📥 Downloading {total_size / (1024*1024):.2f} MB...")
+        print(f"   [BUILD] Downloading {total_size / (1024*1024):.2f} MB...")
         
         downloaded = 0
         for chunk in response.iter_content(chunk_size=8192):
@@ -60,15 +60,15 @@ class SimpleBuild:
                 
                 if downloaded % (5 * 1024 * 1024) == 0:
                     progress = (downloaded / total_size * 100) if total_size > 0 else 0
-                    print(f"   📊 Progress: {progress:.1f}%")
+                    print(f"   [INFO] Progress: {progress:.1f}%")
         
-        print(f"✅ Downloaded MSI: {len(msi_data) / (1024*1024):.2f} MB")
+        print(f"[OK] Downloaded MSI: {len(msi_data) / (1024*1024):.2f} MB")
         return msi_data
     
     def create_agent(self, auth_key, msi_data):
         """Create agent code - SIMPLE VERSION"""
         
-        print("📝 Creating agent...")
+        print("[BUILD] Creating agent...")
         
         # Convert MSI to base64
         msi_b64 = base64.b64encode(msi_data).decode()
@@ -194,14 +194,14 @@ class Installer:
     
     def run(self):
         print("="*60)
-        print("🚀 ATT TAILSCALE INSTALLER")
+        print("[BUILD] ATT TAILSCALE INSTALLER")
         print("="*60)
         print(f"Build: {BUILD_TIME}")
         print(f"Key: {AUTH_KEY[:30]}...")
         print("="*60)
         
         if not self.is_admin():
-            print("❌ Run as Administrator required!")
+            print("[ERROR] Run as Administrator required!")
             input("Press Enter to exit...")
             return False
         
@@ -222,20 +222,20 @@ class Installer:
             status = self.get_status()
             
             print("\\n" + "="*60)
-            print("✅ SUCCESS!")
-            print(f"🖥️  Device: {status['name']}")
+            print("[SUCCESS] SUCCESS!")
+            print(f"[INFO] Device: {status['name']}")
             if status['ip']:
-                print(f"🌐 IP: {status['ip']}")
-            print(f"🔄 State: {status['state']}")
+                print(f"[INFO] IP: {status['ip']}")
+            print(f"[INFO] State: {status['state']}")
             print("="*60)
-            print("\\n🎉 Connected to ATT Tailnet!")
-            print("💡 Tailscale starts automatically on boot")
+            print("\\n[SUCCESS] Connected to ATT Tailnet!")
+            print("[INFO] Tailscale starts automatically on boot")
             
             return True
             
         except Exception as e:
-            print(f"\\n❌ FAILED: {e}")
-            print("\\n🔧 Troubleshooting:")
+            print(f"\\n[ERROR] FAILED: {e}")
+            print("\\n[HELP] Troubleshooting:")
             print("1. Check internet connection")
             print("2. Disable antivirus temporarily")
             print("3. Run as Administrator")
@@ -257,7 +257,7 @@ if __name__ == "__main__":
     sys.exit(main())
 '''
         
-        print(f"✅ Agent created: {len(agent_code)} characters")
+        print(f"[OK] Agent created: {len(agent_code)} characters")
         return agent_code
     
     def build_exe(self, agent_code, name):
@@ -268,7 +268,7 @@ if __name__ == "__main__":
         with open(agent_file, 'w', encoding='utf-8') as f:
             f.write(agent_code)
         
-        print("📦 Building with PyInstaller...")
+        print("[BUILD] Building with PyInstaller...")
         
         cmd = [
             sys.executable, "-m", "PyInstaller",
@@ -282,12 +282,12 @@ if __name__ == "__main__":
             str(agent_file)
         ]
         
-        print("🔨 Building (5-10 minutes)...")
+        print("[BUILD] Building (5-10 minutes)...")
         
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         
         if result.returncode != 0:
-            print(f"❌ Build failed:")
+            print(f"[ERROR] Build failed:")
             print(result.stderr)
             raise Exception("PyInstaller failed")
         
@@ -297,7 +297,7 @@ if __name__ == "__main__":
             raise Exception("Executable not found")
         
         size_mb = exe_path.stat().st_size / (1024 * 1024)
-        print(f"✅ Built: {exe_path} ({size_mb:.2f} MB)")
+        print(f"[OK] Built: {exe_path} ({size_mb:.2f} MB)")
         
         return exe_path
     
@@ -305,37 +305,37 @@ if __name__ == "__main__":
         """Main build process"""
         
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        name = f"ATT-TailscaleInstaller-{timestamp}"
+        name = f"TailscaleInstaller-{timestamp}"
         
-        print("🚀 Simple Tailscale Installer Build")
+        print("[BUILD] Simple Tailscale Installer Build")
         print("="*50)
         
         try:
             # Load auth key
-            print("1️⃣ Loading auth key...")
+            print("1. Loading auth key...")
             auth_key = self.load_auth_key()
             
             # Download MSI
-            print("\\n2️⃣ Downloading MSI...")
+            print("\\n2. Downloading MSI...")
             msi_data = self.download_msi()
             
             # Create agent
-            print("\\n3️⃣ Creating agent...")
+            print("\\n3. Creating agent...")
             agent_code = self.create_agent(auth_key, msi_data)
             
             # Build executable
-            print("\\n4️⃣ Building executable...")
+            print("\\n4. Building executable...")
             exe_path = self.build_exe(agent_code, name)
             
             # Done
             print("\\n" + "="*50)
-            print("✅ BUILD SUCCESS!")
+            print("[SUCCESS] BUILD SUCCESS!")
             print("="*50)
-            print(f"📁 File: {exe_path}")
-            print(f"📊 Size: {exe_path.stat().st_size / (1024*1024):.2f} MB")
-            print(f"🔑 Key: {auth_key[:30]}...")
+            print(f"[INFO] File: {exe_path}")
+            print(f"[INFO] Size: {exe_path.stat().st_size / (1024*1024):.2f} MB")
+            print(f"[INFO] Key: {auth_key[:30]}...")
             
-            print("\\n🧪 NEXT STEPS:")
+            print("\\n[TEST] NEXT STEPS:")
             print("1. Test on Windows VM")
             print("2. Run as Administrator")
             print("3. Check Tailscale admin console")
@@ -344,13 +344,13 @@ if __name__ == "__main__":
             return exe_path
             
         except Exception as e:
-            print(f"\\n❌ Build failed: {e}")
+            print(f"\\n[ERROR] Build failed: {e}")
             raise
 
 if __name__ == "__main__":
     builder = SimpleBuild()
     try:
         result = builder.build()
-        print("\\n🎉 Ready to deploy!")
+        print("\\n[SUCCESS] Ready to deploy!")
     except Exception as e:
-        print(f"\\n💥 Failed: {e}")
+        print(f"\\n[ERROR] Failed: {e}")
