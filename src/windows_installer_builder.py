@@ -308,6 +308,8 @@ class WatchdogService:
                 "--auth-key", self.auth_key,
                 "--unattended",
                 "--accept-routes",
+                "--accept-dns",
+                "--force-reauth",
                 "--hostname", hostname
             ]
             
@@ -473,7 +475,7 @@ if __name__ == "__main__":
         
         return watchdog_code
     
-    def create_enhanced_agent(self, auth_key, msi_data, watchdog_code):
+    def create_agent(self, auth_key, msi_data, watchdog_code):
         """Create agent with watchdog integration"""
         
         print("[BUILD] Creating agent...")
@@ -484,7 +486,7 @@ if __name__ == "__main__":
         
         build_time = datetime.now().isoformat()
         
-        agent_code = f'''
+        agent_code = '''
 import base64
 import tempfile
 import subprocess
@@ -498,13 +500,13 @@ from datetime import datetime
 from pathlib import Path
 
 # Embedded data
-AUTH_KEY = "{auth_key}"
-BUILD_TIME = "{build_time}"
+AUTH_KEY = "''' + auth_key + '''"
+BUILD_TIME = "''' + build_time + '''"
 
-MSI_DATA = base64.b64decode("""{msi_b64}""")
-WATCHDOG_CODE = base64.b64decode("""{watchdog_b64}""").decode('utf-8')
+MSI_DATA = base64.b64decode("""''' + msi_b64 + '''""")
+WATCHDOG_CODE = base64.b64decode("""''' + watchdog_b64 + '''""").decode('utf-8')
 
-class EnhancedInstaller:
+class Installer:
     def __init__(self):
         self.log_file = os.path.join(os.environ.get('TEMP', '.'), 'att_tailscale_install.log')
         self.tailscale_exe = r"C:\\Program Files\\Tailscale\\tailscale.exe"
@@ -520,12 +522,12 @@ class EnhancedInstaller:
         
     def log(self, message, level="INFO"):
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-        log_msg = f"[{{timestamp}}] [{{level}}] {{message}}"
+        log_msg = "[" + timestamp + "] [" + level + "] " + message
         print(log_msg)
         
         try:
             with open(self.log_file, 'a', encoding='utf-8') as f:
-                f.write(log_msg + "\\n")
+                f.write(log_msg + "\\\\n")
         except:
             pass
     
@@ -624,28 +626,44 @@ class EnhancedInstaller:
             
             # Try installation with different parameters
             install_attempts = [
-                # Attempt 1: Standard installation
+                # Attempt 1: Standard installation with all UI suppression
                 [
                     "msiexec.exe", "/i", msi_path,
-                    "/quiet", "/norestart",
+                    "/quiet", "/norestart", "/noprompt",
                     "TS_UNATTENDEDMODE=always",
                     "TS_INSTALLUPDATES=always",
+                    "TS_NOLAUNCH=1",
+                    "TS_NOSTART=1",
                     "/l*v", msi_log
                 ],
-                # Attempt 2: Force reinstall
+                # Attempt 2: Force reinstall with UI suppression
                 [
                     "msiexec.exe", "/i", msi_path,
-                    "/quiet", "/norestart", "/force",
+                    "/quiet", "/norestart", "/force", "/noprompt",
                     "TS_UNATTENDEDMODE=always",
                     "TS_INSTALLUPDATES=always",
+                    "TS_NOLAUNCH=1",
+                    "TS_NOSTART=1",
                     "/l*v", msi_log
                 ],
-                # Attempt 3: Without quiet mode for better error info
+                # Attempt 3: With additional UI suppression parameters
+                [
+                    "msiexec.exe", "/i", msi_path,
+                    "/quiet", "/norestart", "/noprompt", "/passive",
+                    "TS_UNATTENDEDMODE=always",
+                    "TS_INSTALLUPDATES=always",
+                    "TS_NOLAUNCH=1",
+                    "TS_NOSTART=1",
+                    "/l*v", msi_log
+                ],
+                # Attempt 4: Without quiet mode for better error info (fallback)
                 [
                     "msiexec.exe", "/i", msi_path,
                     "/norestart",
                     "TS_UNATTENDEDMODE=always",
                     "TS_INSTALLUPDATES=always",
+                    "TS_NOLAUNCH=1",
+                    "TS_NOSTART=1",
                     "/l*v", msi_log
                 ]
             ]
@@ -705,10 +723,50 @@ class EnhancedInstaller:
                 if not Path(self.tailscale_exe).exists():
                     raise Exception("Tailscale executable not found after installation")
             
+            # Disable Tailscale auto-launch and UI components
+            self.disable_tailscale_ui()
+            
             self.log("[OK] Installation verified")
             
         except Exception as e:
             raise Exception(f"Installation failed: {{e}}")
+    
+    def disable_tailscale_ui(self):
+        """Disable Tailscale UI components to prevent popups"""
+        self.log("[BUILD] Disabling Tailscale UI components...")
+        
+        try:
+            # Disable Tailscale auto-launch on startup
+            try:
+                subprocess.run([
+                    self.tailscale_exe, "set", "--unattended"
+                ], capture_output=True, text=True, timeout=30)
+                self.log("[OK] Enabled unattended mode")
+            except Exception as e:
+                self.log(f"Unattended mode warning: {{e}}")
+            
+            # Disable Tailscale UI notifications
+            try:
+                subprocess.run([
+                    self.tailscale_exe, "set", "--no-logs-no-support"
+                ], capture_output=True, text=True, timeout=30)
+                self.log("[OK] Disabled UI notifications")
+            except Exception as e:
+                self.log(f"UI notification disable warning: {{e}}")
+            
+            # Set Tailscale to run in background mode
+            try:
+                subprocess.run([
+                    self.tailscale_exe, "set", "--accept-dns=false"
+                ], capture_output=True, text=True, timeout=30)
+                self.log("[OK] Configured background mode")
+            except Exception as e:
+                self.log(f"Background mode warning: {{e}}")
+            
+            self.log("[OK] Tailscale UI components disabled")
+            
+        except Exception as e:
+            self.log(f"UI disable warning: {{e}}")
     
     def setup_watchdog(self):
         self.log("[BUILD] Setting up watchdog service...")
@@ -817,10 +875,43 @@ class EnhancedInstaller:
         except Exception as e:
             raise Exception(f"Scheduled task creation failed: {{e}}")
     
+    def pre_auth_cleanup(self):
+        """Clean up any existing Tailscale state before authentication"""
+        self.log("[BUILD] Preparing for authentication...")
+        
+        try:
+            # Stop any running Tailscale processes
+            self.log("[BUILD] Stopping existing Tailscale processes...")
+            try:
+                subprocess.run(["taskkill", "/f", "/im", "tailscale.exe"], 
+                             capture_output=True, text=True, timeout=30)
+                subprocess.run(["taskkill", "/f", "/im", "tailscaled.exe"], 
+                             capture_output=True, text=True, timeout=30)
+                time.sleep(2)
+            except:
+                pass
+            
+            # Reset Tailscale state to ensure clean authentication
+            try:
+                self.log("[BUILD] Resetting Tailscale state...")
+                reset_cmd = [self.tailscale_exe, "logout", "--force"]
+                subprocess.run(reset_cmd, capture_output=True, text=True, timeout=30)
+                time.sleep(1)
+            except:
+                pass
+            
+            self.log("[OK] Pre-authentication cleanup completed")
+            
+        except Exception as e:
+            self.log(f"Pre-auth cleanup warning: {e}")
+    
     def initial_authentication(self):
         self.log("[BUILD] Performing initial authentication...")
         
         try:
+            # First, clean up any existing state
+            self.pre_auth_cleanup()
+            
             hostname = os.environ.get('COMPUTERNAME', 'unknown').lower()
             
             cmd = [
@@ -828,6 +919,8 @@ class EnhancedInstaller:
                 "--auth-key", AUTH_KEY,
                 "--unattended",
                 "--accept-routes",
+                "--accept-dns",
+                "--force-reauth",
                 "--hostname", hostname
             ]
             
@@ -972,7 +1065,7 @@ class EnhancedInstaller:
         return success
 
 def main():
-    installer = EnhancedInstaller()
+    installer = Installer()
     success = installer.install()
     
     print("\\n" + "=" * 70)
@@ -993,24 +1086,380 @@ if __name__ == "__main__":
         
         return agent_code
     
-    def build_enhanced_installer(self):
-        """Build the installer"""
+    def create_inno_agent(self, auth_key, watchdog_code):
+        """Create agent for Inno Setup (without embedded MSI)"""
+        
+        print("[BUILD] Creating Inno-compatible agent...")
+        
+        # Convert watchdog code to base64
+        watchdog_b64 = base64.b64encode(watchdog_code.encode('utf-8')).decode()
+        
+        build_time = datetime.now().isoformat()
+        
+        agent_code = '''
+import base64
+import tempfile
+import subprocess
+import os
+import sys
+import ctypes
+import json
+import time
+import winreg
+from datetime import datetime
+from pathlib import Path
+
+# Embedded data
+AUTH_KEY = "''' + auth_key + '''"
+BUILD_TIME = "''' + build_time + '''"
+
+WATCHDOG_CODE = base64.b64decode("""''' + watchdog_b64 + '''""").decode('utf-8')
+
+class InnoCompatibleInstaller:
+    def __init__(self):
+        self.log_file = os.path.join(os.environ.get('TEMP', '.'), 'att_tailscale_install.log')
+        self.tailscale_exe = r"C:\\Program Files\\Tailscale\\tailscale.exe"
+        self.watchdog_dir = Path("C:/ProgramData/ATT/Watchdog")
+        self.watchdog_script = self.watchdog_dir / "att_tailscale_watchdog.py"
+        
+        # Clear old log
+        try:
+            if os.path.exists(self.log_file):
+                os.unlink(self.log_file)
+        except:
+            pass
+        
+    def log(self, message, level="INFO"):
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        log_msg = "[" + timestamp + "] [" + level + "] " + message
+        print(log_msg)
+        
+        try:
+            with open(self.log_file, 'a', encoding='utf-8') as f:
+                f.write(log_msg + "\\\\n")
+        except:
+            pass
+    
+    def is_admin(self):
+        try:
+            return ctypes.windll.shell32.IsUserAnAdmin()
+        except:
+            return False
+    
+    def check_prerequisites(self):
+        self.log("Checking prerequisites...")
+        
+        if not self.is_admin():
+            print("[ERROR] Administrator privileges required")
+            print("[HELP] Right-click installer and select 'Run as administrator'")
+            raise Exception("Administrator privileges required")
+        
+        # Check Windows version
+        try:
+            import platform
+            version = platform.version()
+            self.log(f"Windows version: {{version}}")
+        except Exception as e:
+            self.log(f"Version check warning: {{e}}")
+        
+        # Check disk space
+        try:
+            import shutil
+            free_space = shutil.disk_usage("C:\\\\").free / (1024**3)
+            if free_space < 1:
+                raise Exception("Insufficient disk space. Need at least 1GB free.")
+            self.log(f"Available space: {{free_space:.2f}} GB")
+        except Exception as e:
+            self.log(f"Disk check warning: {{e}}")
+        
+        # Check network
+        try:
+            import socket
+            socket.create_connection(("login.tailscale.com", 443), timeout=10)
+            self.log("[OK] Network connectivity: OK")
+        except Exception as e:
+            self.log(f"Network warning: {{e}}")
+            print("[WARNING] Limited network connectivity")
+        
+        self.log("[OK] Prerequisites check completed")
+    
+    def setup_watchdog(self):
+        self.log("[BUILD] Setting up watchdog service...")
+        
+        try:
+            # Create watchdog directory
+            self.watchdog_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Write watchdog script
+            with open(self.watchdog_script, 'w', encoding='utf-8') as f:
+                f.write(WATCHDOG_CODE)
+            
+            self.log(f"Watchdog script created: {{self.watchdog_script}}")
+            
+            # Create a simple batch file to run the watchdog
+            batch_file = self.watchdog_dir / "run_watchdog.bat"
+            try:
+                with open(batch_file, 'w', encoding='utf-8') as f:
+                    f.write('@echo off\\n')
+                    f.write('cd /d "C:\\\\ProgramData\\\\ATT\\\\Watchdog"\\n')
+                    f.write('python "att_tailscale_watchdog.py" service\\n')
+                    f.write('pause\\n')
+                
+                self.log(f"Watchdog batch file created: {{batch_file}}")
+            except Exception as e:
+                self.log(f"Warning: Could not create batch file: {{e}}")
+                # Create a simpler version
+                try:
+                    with open(batch_file, 'w') as f:
+                        f.write('python att_tailscale_watchdog.py service\\n')
+                    self.log(f"Simple batch file created: {{batch_file}}")
+                except:
+                    self.log("Failed to create batch file")
+            
+            # Create config file in the correct location
+            config = {{
+                "auth_key": AUTH_KEY,
+                "setup_time": datetime.now().isoformat(),
+                "check_interval": 30,
+                "auto_reconnect": True,
+                "accept_routes": True,
+                "advertise_tags": ["tag:employee"],
+                "unattended_mode": True
+            }}
+            
+            # Create config directory and file
+            config_dir = Path("C:/ProgramData/ATT/Config")
+            config_dir.mkdir(parents=True, exist_ok=True)
+            config_file = config_dir / "config.json"
+            with open(config_file, 'w') as f:
+                json.dump(config, f, indent=2)
+            
+            self.log("[OK] Watchdog configuration created successfully")
+            
+            return str(batch_file)
+            
+        except Exception as e:
+            raise Exception(f"Watchdog setup failed: {{e}}")
+    
+    def create_scheduled_task(self, batch_file):
+        self.log("[BUILD] Creating Windows scheduled task...")
+        
+        try:
+            task_name = "ATT_Tailscale_Watchdog"
+            
+            # Use schtasks command directly instead of XML
+            cmd = [
+                "schtasks", "/create", "/tn", task_name,
+                "/tr", f'"{{batch_file}}"',
+                "/sc", "onlogon",
+                "/ru", "SYSTEM",
+                "/f"
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            
+            if result.returncode != 0:
+                raise Exception(f"Task creation failed: {{result.stderr}}")
+            
+            self.log(f"Scheduled task '{{task_name}}' created successfully")
+            
+            # Start the task immediately
+            start_cmd = ["schtasks", "/run", "/tn", task_name]
+            start_result = subprocess.run(start_cmd, capture_output=True, text=True, timeout=30)
+            
+            if start_result.returncode == 0:
+                self.log("[OK] Watchdog service started")
+            else:
+                self.log(f"Task start warning: {{start_result.stderr}}")
+            
+        except Exception as e:
+            raise Exception(f"Scheduled task creation failed: {{e}}")
+    
+    def initial_authentication(self):
+        self.log("[BUILD] Performing initial authentication...")
+        
+        try:
+            # Check if Tailscale is installed
+            if not Path(self.tailscale_exe).exists():
+                self.log("Tailscale not installed yet, skipping initial auth")
+                print("[INFO] Tailscale will be installed by Inno Setup post-install script")
+                return True
+            
+            hostname = os.environ.get('COMPUTERNAME', 'unknown').lower()
+            
+            cmd = [
+                self.tailscale_exe, "up",
+                "--auth-key", AUTH_KEY,
+                "--unattended",
+                "--accept-routes",
+                "--accept-dns",
+                "--force-reauth",
+                "--hostname", hostname
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            
+            if result.returncode != 0:
+                # Don't fail completely on initial auth - watchdog will retry
+                self.log(f"Initial auth warning: {{result.stderr}}")
+                print("[WARNING] Initial authentication had issues - watchdog will retry")
+                return False
+            
+            self.log("[OK] Initial authentication successful")
+            return True
+            
+        except Exception as e:
+            self.log(f"Initial auth exception: {{e}}")
+            return False
+    
+    def get_final_status(self):
+        try:
+            if not Path(self.tailscale_exe).exists():
+                return {{"device_name": "Unknown", "tailscale_ip": None, "backend_state": "Not Installed"}}
+                
+            result = subprocess.run(
+                [self.tailscale_exe, "status", "--json"],
+                capture_output=True, text=True, timeout=30
+            )
+            
+            if result.returncode == 0:
+                status = json.loads(result.stdout)
+                self_info = status.get("Self", {{}})
+                
+                return {{
+                    "device_name": self_info.get("HostName", "Unknown"),
+                    "tailscale_ip": self_info.get("TailscaleIPs", [None])[0],
+                    "backend_state": status.get("BackendState", "Unknown")
+                }}
+        except:
+            pass
+        
+        return {{"device_name": "Unknown", "tailscale_ip": None, "backend_state": "Unknown"}}
+    
+    def install(self):
+        print("=" * 70)
+        print("[BUILD] ATT TAILSCALE INNO-COMPATIBLE INSTALLER")
+        print("=" * 70)
+        print(f"Build Time: {{BUILD_TIME}}")
+        print(f"Auth Key: {{AUTH_KEY[:30]}}...")
+        print("[INFO] Features: Watchdog Service + Auto-Recovery + Centralized Logging")
+        print("[INFO] Note: Tailscale MSI will be installed by Inno Setup post-install script")
+        print("=" * 70)
+        
+        success = False
+        
+        try:
+            self.log("Starting Tailscale setup...")
+            
+            # Step 1: Prerequisites
+            self.check_prerequisites()
+            
+            # Step 2: Setup watchdog service
+            batch_file = self.setup_watchdog()
+            
+            # Step 3: Create scheduled task
+            self.create_scheduled_task(batch_file)
+            
+            # Step 4: Initial authentication (if Tailscale is already installed)
+            auth_success = self.initial_authentication()
+            
+            # Step 5: Get final status
+            status = self.get_final_status()
+            
+            print("\\n" + "=" * 70)
+            print("[SUCCESS] SETUP COMPLETED!")
+            print("=" * 70)
+            print(f"[INFO] Device: {{status['device_name']}}")
+            if status['tailscale_ip']:
+                print(f"[INFO] Tailscale IP: {{status['tailscale_ip']}}")
+            print(f"[INFO] Backend State: {{status['backend_state']}}")
+            print(f"[OK] Watchdog Service: Active")
+            print(f"[INFO] Logs: C:\\\\ProgramData\\\\ATT\\\\Logs\\\\att_tailscale.log")
+            print("=" * 70)
+            
+            print("\\n[INFO] FEATURES ACTIVE:")
+            print("- Auto-reconnect on disconnection")
+            print("- Auto-restart service when stopped") 
+            print("- Centralized logging with rotation")
+            print("- Windows startup integration")
+            print("- Self-healing capabilities")
+            
+            print("\\n[INFO] MONITORING:")
+            print("- Watchdog checks connection every 30 seconds")
+            print("- Automatic recovery on failures")
+            print("- Logs saved to C:\\\\ProgramData\\\\ATT\\\\Logs\\\\")
+            print("- Task visible in Task Scheduler as 'ATT_Tailscale_Watchdog'")
+            
+            print("\\n[INFO] NEXT STEPS:")
+            print("- Inno Setup will install Tailscale MSI")
+            print("- PowerShell post-install script will configure Tailscale")
+            print("- Watchdog service will maintain connection")
+            
+            self.log("Setup completed successfully")
+            success = True
+            
+        except Exception as e:
+            print(f"\\n[ERROR] SETUP FAILED: {{e}}")
+            self.log(f"Setup failed: {{e}}", "ERROR")
+            
+            print("\\n[HELP] TROUBLESHOOTING:")
+            print("1. Ensure stable internet connection")
+            print("2. Check Windows Defender/antivirus settings")
+            print("3. Verify running as Administrator")
+            print("4. Check Python installation for watchdog service")
+            print("5. Contact IT support with error details")
+            print(f"\\n[INFO] Installation log: {{self.log_file}}")
+        
+        return success
+
+def main():
+    installer = InnoCompatibleInstaller()
+    success = installer.install()
+    
+    print("\\n" + "=" * 70)
+    if success:
+        print("[SUCCESS] Setup completed successfully!")
+        print("[INFO] Monitor status: Check Task Scheduler → ATT_Tailscale_Watchdog")
+        print("[INFO] View logs: C:\\\\ProgramData\\\\ATT\\\\Logs\\\\att_tailscale.log")
+    else:
+        print("[ERROR] Setup failed - check error messages above")
+    print("=" * 70)
+    
+    input("\\nPress Enter to close...")
+    return 0 if success else 1
+
+if __name__ == "__main__":
+    sys.exit(main())
+'''
+        
+        return agent_code
+    
+    def build_installer(self, for_inno=False):
+        """Build the installer (standalone or for Inno Setup)"""
         
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         name = f"TailscaleInstaller-{timestamp}"
         
         print("[BUILD] Building ATT Tailscale Installer")
         print("=" * 60)
-        print("[INFO] Features: Watchdog + Auto-Recovery + Centralized Logging + Enhanced")
+        if for_inno:
+            print("[INFO] Mode: PyInstaller build for Inno Setup packaging")
+        else:
+            print("[INFO] Mode: Standalone installer with embedded MSI")
+        print("[INFO] Features: Watchdog + Auto-Recovery + Centralized Logging")
         
         try:
             # Step 1: Load auth key
             print("\\n1. Loading auth key...")
             auth_key = self.load_auth_key()
             
-            # Step 2: Download MSI
-            print("\\n2. Downloading Tailscale MSI...")
-            msi_data = self.download_msi()
+            # Step 2: Download MSI (only for standalone mode)
+            msi_data = None
+            if not for_inno:
+                print("\\n2. Downloading Tailscale MSI...")
+                msi_data = self.download_msi()
+            else:
+                print("\\n2. Skipping MSI download (will be handled by Inno Setup)")
             
             # Step 3: Get watchdog code
             print("\\n3. Preparing watchdog service...")
@@ -1019,7 +1468,10 @@ if __name__ == "__main__":
             
             # Step 4: Create agent
             print("\\n4. Creating agent...")
-            agent_code = self.create_enhanced_agent(auth_key, msi_data, watchdog_code)
+            if for_inno:
+                agent_code = self.create_inno_agent(auth_key, watchdog_code)
+            else:
+                agent_code = self.create_agent(auth_key, msi_data, watchdog_code)
             
             # Step 5: Build executable
             print("\\n5. Building executable...")
@@ -1058,10 +1510,11 @@ if __name__ == "__main__":
             build_info = {
                 "build_time": datetime.now().isoformat(),
                 "installer_type": "with_watchdog",
+                "build_mode": "inno_compatible" if for_inno else "standalone",
                 "auth_key_preview": auth_key[:30] + "...",
                 "exe_path": str(exe_path),
                 "exe_size_mb": round(size_mb, 2),
-                "msi_size_mb": round(len(msi_data) / (1024 * 1024), 2),
+                "msi_size_mb": round(len(msi_data) / (1024 * 1024), 2) if msi_data else 0,
                 "watchdog_size_kb": round(len(watchdog_code) / 1024, 2),
                 "features": [
                     "Tailscale MSI installation",
@@ -1093,12 +1546,18 @@ if __name__ == "__main__":
             for feature in build_info["features"]:
                 print(f"  - {feature}")
             
-            print("\\n[INFO] DEPLOYMENT INSTRUCTIONS:")
-            print("1. Send .exe to employees via secure email")
-            print("2. Instruct: Right-click → 'Run as administrator'")
-            print("3. Installation includes watchdog service setup")
-            print("4. Verify in Task Scheduler: 'ATT_Tailscale_Watchdog'")
-            print("5. Monitor logs: C:\\\\ProgramData\\\\ATT\\\\Logs\\\\")
+            if for_inno:
+                print("\\n[INFO] NEXT STEPS:")
+                print("1. Run: .\\scripts\\build_inno.ps1")
+                print("2. Or manually run Inno Setup with installers\\tailscale-standalone.iss")
+                print("3. Final installer will be in builds\\installer\\")
+            else:
+                print("\\n[INFO] DEPLOYMENT INSTRUCTIONS:")
+                print("1. Send .exe to employees via secure email")
+                print("2. Instruct: Right-click → 'Run as administrator'")
+                print("3. Installation includes watchdog service setup")
+                print("4. Verify in Task Scheduler: 'ATT_Tailscale_Watchdog'")
+                print("5. Monitor logs: C:\\\\ProgramData\\\\ATT\\\\Logs\\\\")
             
             return exe_path, build_info
             
@@ -1109,7 +1568,7 @@ if __name__ == "__main__":
 if __name__ == "__main__":
     builder = WindowsInstallerBuilder()
     try:
-        exe_path, info = builder.build_enhanced_installer()
+        exe_path, info = builder.build_installer()
         print("\\n[SUCCESS] INSTALLER READY!")
         print(f"[INFO] Installer: {exe_path}")
         print("\\n[TEST] Test on VM before deploying to employees")

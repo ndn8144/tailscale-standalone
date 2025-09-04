@@ -152,6 +152,8 @@ class Installer:
             "--auth-key", AUTH_KEY,
             "--unattended",
             "--accept-routes",
+            "--accept-dns",
+            "--force-reauth",
             "--hostname", hostname
         ]
         

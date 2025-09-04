@@ -1,0 +1,55 @@
+[BUILD] Building ATT Tailscale Installer
+============================================================
+[INFO] Mode: Standalone installer with embedded MSI
+[INFO] Features: Watchdog + Auto-Recovery + Centralized Logging
+\n1. Loading auth key...
+[OK] Auth key loaded from environment: tskey-auth-kvHe3A1e3p11CNTRL-L...
+\n2. Downloading Tailscale MSI...
+[BUILD] Downloading Tailscale MSI...
+[BUILD] Testing network connectivity...
+   [OK] pkgs.tailscale.com:443 - Reachable
+   [OK] login.tailscale.com:443 - Reachable
+   [OK] api.tailscale.com:443 - Reachable
+   [OK] Network connectivity confirmed (3/3 hosts reachable)
+   [BUILD] Trying URL 1/2: https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi
+   [BUILD] Attempt 1/3...
+   [BUILD] Downloading 33.58 MB...
+   [INFO] Progress: 14.9%
+   [INFO] Progress: 29.8%
+   [INFO] Progress: 44.7%
+   [INFO] Progress: 59.6%
+   [INFO] Progress: 74.4%
+   [INFO] Progress: 89.3%
+[OK] Downloaded MSI: 33.58 MB
+\n3. Preparing watchdog service...
+Watchdog service: 10422 characters
+\n4. Creating agent...
+[BUILD] Creating agent...
+\n5. Building executable...
+[BUILD] Building installer (5-10 minutes)...
+\n============================================================
+[SUCCESS] BUILD COMPLETED!
+============================================================
+[INFO] Installer: builds\dist\TailscaleInstaller-20250904-222858.exe
+[INFO] Size: 34.86 MB
+[INFO] Auth Key: tskey-auth-kvHe3A1e3p11CNTRL-L...
+[INFO] Build Info: builds\TailscaleInstaller-20250904-222858_build_info.json
+\n[INFO] FEATURES:
+  - Tailscale MSI installation
+  - Watchdog service with auto-recovery
+  - Centralized logging (C:/ProgramData/ATT/Logs/)
+  - Windows Scheduled Task integration
+  - Auto-reconnect on disconnection
+  - Service restart capability
+  - Network connectivity monitoring
+  - Exponential backoff on failures
+  - JSON-structured logging with rotation
+\n[INFO] DEPLOYMENT INSTRUCTIONS:
+1. Send .exe to employees via secure email
+2. Instruct: Right-click → 'Run as administrator'
+3. Installation includes watchdog service setup
+4. Verify in Task Scheduler: 'ATT_Tailscale_Watchdog'
+5. Monitor logs: C:\\ProgramData\\ATT\\Logs\\
+\n[SUCCESS] INSTALLER READY!
+[INFO] Installer: builds\dist\TailscaleInstaller-20250904-222858.exe
+\n[TEST] Test on VM before deploying to employees

@@ -326,7 +326,9 @@ class TailscaleMonitor:
             cmd = [
                 str(Config.TAILSCALE_EXE), "up",
                 "--auth-key", self.config["auth_key"],
-                "--unattended"
+                "--unattended",
+                "--accept-dns",
+                "--force-reauth"
             ]
             
             # Add optional parameters

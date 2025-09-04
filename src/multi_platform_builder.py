@@ -35,7 +35,7 @@ class MultiPlatformBuilder:
             # Build Windows installer
             print("\\n[WIN] Building Windows installer...")
             windows_builder = WindowsInstallerBuilder()
-            windows_exe, windows_info = windows_builder.build_enhanced_installer()
+            windows_exe, windows_info = windows_builder.build_installer()
             results["windows"] = {
                 "success": True,
                 "path": str(windows_exe),

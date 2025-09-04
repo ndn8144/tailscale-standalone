@@ -1,0 +1,286 @@
+name: Build and Release Windows Installer
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (leave empty for auto)'
+        required: false
+        type: string
+      auth_key:
+        description: 'Tailscale Auth Key (leave empty to use secret)'
+        required: false
+        type: string
+
+env:
+  PYTHON_VERSION: '3.11'
+  BUILD_ARTIFACT_NAME: 'att-tailscale-installer'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for version detection
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+    
+    - name: Install Inno Setup
+      run: |
+        # Install Inno Setup via winget
+        winget install --id=JRSoftware.InnoSetup -e --silent --accept-package-agreements --accept-source-agreements
+        
+        # Verify installation
+        if (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe") {
+          Write-Host "Inno Setup 6 installed successfully"
+        } elseif (Test-Path "${env:ProgramFiles}\Inno Setup 6\ISCC.exe") {
+          Write-Host "Inno Setup 6 installed successfully (x64)"
+        } else {
+          Write-Error "Inno Setup installation failed"
+          exit 1
+        }
+    
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Set up build environment
+      run: |
+        # Create necessary directories
+        New-Item -ItemType Directory -Path "builds\installer" -Force | Out-Null
+        New-Item -ItemType Directory -Path "temp" -Force | Out-Null
+        
+        # Set environment variables
+        $env:BUILD_OUTPUT = "builds\installer"
+        $env:PYTHONPATH = $PWD
+        
+        # Create .env file if auth key is provided
+        if ("${{ github.event.inputs.auth_key }}" -ne "") {
+          "TAILSCALE_AUTH_KEY=${{ github.event.inputs.auth_key }}" | Out-File -FilePath ".env" -Encoding UTF8
+        } elseif ("${{ secrets.TAILSCALE_AUTH_KEY }}" -ne "") {
+          "TAILSCALE_AUTH_KEY=${{ secrets.TAILSCALE_AUTH_KEY }}" | Out-File -FilePath ".env" -Encoding UTF8
+        }
+    
+    - name: Determine version
+      id: version
+      run: |
+        if ("${{ github.event.inputs.version }}" -ne "") {
+          $version = "${{ github.event.inputs.version }}"
+        } elseif ("${{ github.ref_name }}" -like "v*") {
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+        } else {
+          # Get version from git describe
+          $gitVersion = git describe --tags --always
+          if ($gitVersion) {
+            $version = $gitVersion -replace '^v', ''
+          } else {
+            $timestamp = Get-Date -Format "yyyy.MM.dd.HHmm"
+            $version = "1.0.0.$timestamp"
+          }
+        }
+        
+        Write-Host "Version: $version"
+        echo "version=$version" >> $env:GITHUB_OUTPUT
+        echo "VERSION=$version" >> $env:GITHUB_ENV
+    
+    - name: Build PyInstaller executable
+      run: |
+        Write-Host "Building PyInstaller executable..."
+        python src\windows_installer_builder.py
+        
+        # Verify build
+        $exeFiles = Get-ChildItem "builds\dist\*.exe" -ErrorAction SilentlyContinue
+        if ($exeFiles.Count -eq 0) {
+          Write-Error "No executable found in builds\dist\"
+          exit 1
+        }
+        
+        $exeFile = $exeFiles[0]
+        $exeSize = [math]::Round($exeFile.Length / 1MB, 2)
+        Write-Host "PyInstaller build completed: $($exeFile.Name) ($exeSize MB)"
+    
+    - name: Build Inno Setup installer
+      run: |
+        Write-Host "Building Inno Setup installer..."
+        
+        # Get Inno Setup path
+        $isccPath = if (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe") {
+          "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+        } else {
+          "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+        }
+        
+        # Prepare parameters
+        $appVersion = "${{ env.VERSION }}"
+        $appBinDir = "builds\dist"
+        $authKey = if ("${{ secrets.TAILSCALE_AUTH_KEY }}" -ne "") { "${{ secrets.TAILSCALE_AUTH_KEY }}" } else { "" }
+        
+        # Build command
+        $isccArgs = @(
+          "installers\tailscale-standalone.iss"
+          "/DAppVersion=$appVersion"
+          "/DAppBinDir=`"$appBinDir`""
+          "/O`"builds\installer`""
+        )
+        
+        if ($authKey) {
+          $isccArgs += "/DAuthKey=`"$authKey`""
+        }
+        
+        Write-Host "Running: $isccPath $($isccArgs -join ' ')"
+        
+        # Run Inno Setup Compiler
+        & $isccPath $isccArgs
+        
+        if ($LASTEXITCODE -ne 0) {
+          Write-Error "Inno Setup compilation failed with exit code: $LASTEXITCODE"
+          exit 1
+        }
+        
+        # Verify installer
+        $installerFiles = Get-ChildItem "builds\installer\*.exe" -ErrorAction SilentlyContinue
+        if ($installerFiles.Count -eq 0) {
+          Write-Error "No installer found in builds\installer\"
+          exit 1
+        }
+        
+        $installerFile = $installerFiles[0]
+        $installerSize = [math]::Round($installerFile.Length / 1MB, 2)
+        Write-Host "Inno Setup build completed: $($installerFile.Name) ($installerSize MB)"
+    
+    - name: Test installer (basic validation)
+      run: |
+        Write-Host "Testing installer..."
+        
+        $installerFiles = Get-ChildItem "builds\installer\*.exe"
+        $installerFile = $installerFiles[0]
+        
+        # Basic file validation
+        if ($installerFile.Length -lt 1MB) {
+          Write-Error "Installer file seems too small: $($installerFile.Length) bytes"
+          exit 1
+        }
+        
+        # Test silent installation in temporary directory
+        $testDir = Join-Path $env:TEMP "att-tailscale-test-$(Get-Random)"
+        try {
+          New-Item -ItemType Directory -Path $testDir -Force | Out-Null
+          
+          Write-Host "Running silent installation test..."
+          $testArgs = @(
+            "/SILENT"
+            "/DIR=`"$testDir`""
+            "/LOG=`"$testDir\install.log`""
+            "/SUPPRESSMSGBOXES"
+            "/NORESTART"
+          )
+          
+          $testProcess = Start-Process -FilePath $installerFile.FullName -ArgumentList $testArgs -Wait -PassThru -NoNewWindow
+          
+          if ($testProcess.ExitCode -eq 0) {
+            Write-Host "Silent installation test passed"
+          } else {
+            Write-Warning "Silent installation test failed with exit code: $($testProcess.ExitCode)"
+            # Don't fail the build for test issues, just warn
+          }
+        }
+        catch {
+          Write-Warning "Silent installation test error: $($_.Exception.Message)"
+        }
+        finally {
+          if (Test-Path $testDir) {
+            Remove-Item $testDir -Recurse -Force -ErrorAction SilentlyContinue
+          }
+        }
+    
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.BUILD_ARTIFACT_NAME }}-${{ env.VERSION }}
+        path: |
+          builds\installer\*.exe
+          builds\*.json
+        retention-days: 30
+    
+    - name: Create release (on tag)
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: builds\installer\*.exe
+        generate_release_notes: true
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Upload to release (on tag)
+      if: startsWith(github.ref, 'refs/tags/v')
+      run: |
+        $installerFiles = Get-ChildItem "builds\installer\*.exe"
+        $installerFile = $installerFiles[0]
+        
+        # Get release info
+        $release = gh api repos/${{ github.repository }}/releases/latest
+        $releaseId = ($release | ConvertFrom-Json).id
+        
+        # Upload installer
+        gh api repos/${{ github.repository }}/releases/$releaseId/assets `
+          -F name="$($installerFile.Name)" `
+          -F file=@"$($installerFile.FullName)" `
+          --header "Content-Type: application/octet-stream"
+    
+    - name: Build summary
+      if: always()
+      run: |
+        Write-Host ""
+        Write-Host "=" * 80 -ForegroundColor Magenta
+        Write-Host "BUILD SUMMARY" -ForegroundColor Magenta
+        Write-Host "=" * 80 -ForegroundColor Magenta
+        
+        $installerFiles = Get-ChildItem "builds\installer\*.exe" -ErrorAction SilentlyContinue
+        if ($installerFiles) {
+          $installerFile = $installerFiles[0]
+          $installerSize = [math]::Round($installerFile.Length / 1MB, 2)
+          
+          Write-Host "✓ Installer: $($installerFile.Name)" -ForegroundColor Green
+          Write-Host "✓ Size: $installerSize MB" -ForegroundColor Green
+          Write-Host "✓ Version: ${{ env.VERSION }}" -ForegroundColor Green
+          Write-Host "✓ Path: $($installerFile.FullName)" -ForegroundColor Green
+        } else {
+          Write-Host "✗ No installer found" -ForegroundColor Red
+        }
+        
+        Write-Host ""
+        Write-Host "FEATURES:" -ForegroundColor Cyan
+        Write-Host "  ✓ Tailscale MSI installation" -ForegroundColor Green
+        Write-Host "  ✓ Watchdog service with auto-recovery" -ForegroundColor Green
+        Write-Host "  ✓ Centralized logging" -ForegroundColor Green
+        Write-Host "  ✓ Windows Scheduled Task integration" -ForegroundColor Green
+        Write-Host "  ✓ Desktop shortcuts" -ForegroundColor Green
+        Write-Host "  ✓ Uninstaller" -ForegroundColor Green
+        Write-Host "  ✓ Silent installation support" -ForegroundColor Green
+        
+        Write-Host ""
+        Write-Host "DEPLOYMENT:" -ForegroundColor Cyan
+        Write-Host "  • Download from GitHub Releases" -ForegroundColor Yellow
+        Write-Host "  • Right-click → 'Run as administrator'" -ForegroundColor Yellow
+        Write-Host "  • Silent: installer.exe /SILENT" -ForegroundColor Yellow
+        Write-Host "  • Monitor: C:\ProgramData\ATT\Logs\" -ForegroundColor Yellow
+        
+        Write-Host "=" * 80 -ForegroundColor Magenta

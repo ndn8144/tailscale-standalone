@@ -1,0 +1,86 @@
+{
+  "version": "1.0.0",
+  "tailscale": {
+    "auth_key": "",
+    "hostname": "",
+    "accept_routes": true,
+    "accept_dns": true,
+    "advertise_routes": [],
+    "advertise_tags": ["tag:employee"],
+    "unattended_mode": true,
+    "force_reauth": true,
+    "shields_up": false,
+    "exit_node": false
+  },
+  "watchdog": {
+    "enabled": true,
+    "check_interval": 30,
+    "auto_reconnect": true,
+    "max_retries": 5,
+    "backoff_multiplier": 2,
+    "max_backoff": 300,
+    "log_level": "INFO",
+    "log_rotation": true,
+    "max_log_size_mb": 10,
+    "max_log_files": 5
+  },
+  "service": {
+    "name": "ATT_Tailscale_Watchdog",
+    "display_name": "ATT Tailscale Watchdog Service",
+    "description": "Automatically monitors and maintains Tailscale VPN connection",
+    "start_type": "automatic",
+    "run_as": "SYSTEM",
+    "restart_on_failure": true,
+    "restart_delay": 5000
+  },
+  "logging": {
+    "enabled": true,
+    "log_dir": "C:/ProgramData/ATT/Logs",
+    "log_file": "att_tailscale.log",
+    "console_output": true,
+    "file_output": true,
+    "json_format": true,
+    "include_timestamp": true,
+    "include_level": true,
+    "include_thread": false
+  },
+  "network": {
+    "test_hosts": [
+      "login.tailscale.com:443",
+      "api.tailscale.com:443",
+      "pkgs.tailscale.com:443"
+    ],
+    "timeout": 10,
+    "retry_attempts": 3,
+    "retry_delay": 2
+  },
+  "security": {
+    "require_admin": true,
+    "encrypt_config": false,
+    "validate_auth_key": true,
+    "key_rotation_days": 90,
+    "audit_logging": true
+  },
+  "deployment": {
+    "organization": "ATT Corporation",
+    "department": "IT Security",
+    "contact_email": "it-security@att.com",
+    "support_url": "https://support.att.com/tailscale",
+    "documentation_url": "https://docs.att.com/tailscale",
+    "version_check_url": "https://api.att.com/tailscale/version",
+    "auto_update": false,
+    "update_channel": "stable"
+  },
+  "advanced": {
+    "debug_mode": false,
+    "verbose_logging": false,
+    "performance_monitoring": true,
+    "health_check_endpoint": "",
+    "custom_scripts": {
+      "pre_install": "",
+      "post_install": "",
+      "pre_uninstall": "",
+      "post_uninstall": ""
+    }
+  }
+}

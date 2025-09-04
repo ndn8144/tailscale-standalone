@@ -1,0 +1,103 @@
+Inno Setup 6 Command-Line Compiler
+Copyright (C) 1997-2025 Jordan Russell. All rights reserved.
+Portions Copyright (C) 2000-2025 Martijn Laan. All rights reserved.
+Portions Copyright (C) 2001-2004 Alex Yackimoff. All rights reserved.
+https://www.innosetup.com
+
+Compiler engine version: Inno Setup 6.5.1
+Non-commercial use only
+
+Preprocessing
+   Reading file: C:\Program Files (x86)\Inno Setup 6\ISPPBuiltins.iss
+Parsing [Setup] section, line 29
+Parsing [Setup] section, line 30
+Parsing [Setup] section, line 31
+Parsing [Setup] section, line 32
+Parsing [Setup] section, line 33
+Parsing [Setup] section, line 34
+Parsing [Setup] section, line 35
+Parsing [Setup] section, line 36
+Parsing [Setup] section, line 37
+Parsing [Setup] section, line 38
+Parsing [Setup] section, line 39
+Parsing [Setup] section, line 40
+Parsing [Setup] section, line 41
+Parsing [Setup] section, line 42
+Parsing [Setup] section, line 43
+Parsing [Setup] section, line 44
+Parsing [Setup] section, line 45
+Parsing [Setup] section, line 46
+Parsing [Setup] section, line 47
+Parsing [Setup] section, line 48
+Parsing [Setup] section, line 49
+Parsing [Setup] section, line 50
+Reading file (WizardImageFile)
+Reading file (WizardSmallImageFile)
+Preparing Setup program executable
+   Verification successful
+   Updating version info (Setup.e32)
+Determining language code pages
+Parsing [Languages] section, line 56
+   Reading file: C:\Program Files (x86)\Inno Setup 6\Default.isl
+   Messages in script file
+Reading default messages from Default.isl
+Parsing [Languages] section, line 56
+   Reading file: C:\Program Files (x86)\Inno Setup 6\Default.isl
+Parsing [LangOptions], [Messages], and [CustomMessages] sections
+   Messages in script file
+Reading [Code] section
+Parsing [Tasks] section, line 63
+Parsing [Tasks] section, line 64
+Parsing [Tasks] section, line 65
+Parsing [Tasks] section, line 66
+Parsing [Icons] section, line 88
+Parsing [Icons] section, line 89
+Parsing [Icons] section, line 90
+Parsing [Icons] section, line 91
+Parsing [Registry] section, line 95
+Parsing [Registry] section, line 96
+Parsing [Registry] section, line 97
+Parsing [Registry] section, line 100
+Parsing [Registry] section, line 103
+Parsing [UninstallDelete] section, line 123
+Parsing [UninstallDelete] section, line 124
+Parsing [UninstallDelete] section, line 125
+Parsing [Run] section, line 107
+Parsing [Run] section, line 110
+Parsing [Run] section, line 113
+Parsing [UninstallRun] section, line 117
+Parsing [UninstallRun] section, line 120
+Parsing [Files] section, line 70
+Parsing [Files] section, line 73
+Parsing [Files] section, line 76
+Parsing [Files] section, line 79
+Parsing [Files] section, line 82
+Parsing [Files] section, line 85
+Compiling [Code] section
+Deleting ATT-Tailscale-Standalone-Setup-10cd0ee.exe from output directory
+Creating setup files
+   Verification successful
+   Compressing: D:\WorkSpace\tailscale-standalone\builds\dist\TailscaleInstaller-20250904-222104.exe
+   Compressing: D:\WorkSpace\tailscale-standalone\builds\dist\TailscaleInstaller-20250904-222229.exe
+   Compressing: D:\WorkSpace\tailscale-standalone\builds\dist\TailscaleInstaller-20250904-222800.exe
+   Compressing: D:\WorkSpace\tailscale-standalone\builds\dist\TailscaleInstaller-20250904-222858.exe
+   Compressing: D:\WorkSpace\tailscale-standalone\builds\dist\TailscaleInstaller-20250904-223004.exe
+   Compressing: D:\WorkSpace\tailscale-standalone\builds\dist\TailscaleInstaller-20250904-223117.exe
+   Compressing: D:\WorkSpace\tailscale-standalone\builds\dist\TailscaleInstaller-20250904-223217.exe
+   Compressing: D:\WorkSpace\tailscale-standalone\builds\dist\TailscaleInstaller-20250904-223524.exe
+   Compressing: D:\WorkSpace\tailscale-standalone\builds\dist\TailscaleInstaller-20250904-225531.exe
+   Compressing: D:\WorkSpace\tailscale-standalone\installers\..\templates\install_script.ps1
+   Compressing: D:\WorkSpace\tailscale-standalone\installers\..\templates\config_template.json
+   Compressing: D:\WorkSpace\tailscale-standalone\installers\..\src\att_tailscale_watchdog.py
+   Compressing: D:\WorkSpace\tailscale-standalone\installers\..\README.md
+   Compressing Setup program executable
+   Updating version info (Setup.exe)
+   Updating manifest (Setup.exe)
+
+Warning: Architecture identifier "x64" is deprecated. Substituting "x64os", but note that "x64compatible" is preferred in most cases. See the "Architecture Identifiers" topic in help file for more information.
+Warning: There are [UninstallRun] section entries without a RunOnceId parameter. By assigning a string to RunOnceId, you can ensure that a particular [UninstallRun] entry will only be executed once during uninstallation. See the "[UninstallRun]" topic in help file for more information.
+Warning: The [Setup] section directive "PrivilegesRequired" is set to "admin" but per-user areas (userappdata) are used by the script. Regardless of the version of Windows, if the installation is running in administrative install mode then you should be careful about making any per-user area changes: such changes may not achieve what you are intending. See the "UsedUserAreasWarning" topic in help file for more information.
+Warning: Line 143, Column 10: [Hint] Support function "IsAdminLoggedOn" has been renamed. Use "IsAdmin" instead or consider using "IsAdminInstallMode".
+
+Successful compile (43.985 sec). Resulting Setup program filename is:
+D:\WorkSpace\tailscale-standalone\builds\installer\ATT-Tailscale-Standalone-Setup-10cd0ee.exe
