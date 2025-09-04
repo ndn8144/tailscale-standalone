@@ -402,27 +402,86 @@ class TailscaleMonitor:
             try:
                 import psutil  # type: ignore
             except ImportError:
-                return False
+                # Fallback: try to detect using tasklist command
+                return self._detect_manual_shutdown_fallback()
             
             tailscale_processes = []
-            for proc in psutil.process_iter(['pid', 'name', 'exe']):
+            tailscaled_processes = []
+            
+            for proc in psutil.process_iter(['pid', 'name', 'exe', 'cmdline']):
                 try:
-                    if proc.info['name'] and 'tailscale' in proc.info['name'].lower():
-                        tailscale_processes.append(proc.info)
+                    proc_name = proc.info['name']
+                    if proc_name and 'tailscale' in proc_name.lower():
+                        if 'tailscaled' in proc_name.lower():
+                            tailscaled_processes.append(proc.info)
+                        else:
+                            tailscale_processes.append(proc.info)
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
             
             service_status = self.check_service_status()
+            ts_status = self.get_tailscale_status()
             
-            # If service is stopped but processes are running, it might be manual shutdown
-            if service_status == "stopped" and tailscale_processes:
-                self.logger.warning("Detected potential manual Tailscale shutdown - processes running but service stopped")
+            # Detection logic for manual shutdown:
+            # 1. Service is stopped but tailscaled process is running
+            # 2. Tailscale status shows "Stopped" but processes exist
+            # 3. Backend state is "Stopped" but we have running processes
+            
+            manual_shutdown_indicators = []
+            
+            if service_status == "stopped" and tailscaled_processes:
+                manual_shutdown_indicators.append("service_stopped_but_daemon_running")
+            
+            if ts_status.get("BackendState") == "Stopped" and (tailscale_processes or tailscaled_processes):
+                manual_shutdown_indicators.append("backend_stopped_but_processes_running")
+            
+            if ts_status.get("status") == "not_running" and (tailscale_processes or tailscaled_processes):
+                manual_shutdown_indicators.append("status_not_running_but_processes_exist")
+            
+            if manual_shutdown_indicators:
+                self.logger.warning(f"Detected manual Tailscale shutdown - Indicators: {', '.join(manual_shutdown_indicators)}")
+                self.logger.debug(f"Service status: {service_status}, Backend state: {ts_status.get('BackendState')}")
+                self.logger.debug(f"Processes found - tailscale: {len(tailscale_processes)}, tailscaled: {len(tailscaled_processes)}")
                 return True
                 
             return False
             
         except Exception as e:
             self.logger.debug(f"Manual shutdown detection failed: {e}")
+            return self._detect_manual_shutdown_fallback()
+    
+    def _detect_manual_shutdown_fallback(self):
+        """Fallback method to detect manual shutdown using system commands"""
+        try:
+            # Check if tailscale processes are running
+            result = subprocess.run(
+                ["tasklist", "/fi", "imagename eq tailscale.exe"],
+                capture_output=True, text=True, timeout=10
+            )
+            tailscale_running = "tailscale.exe" in result.stdout
+            
+            result = subprocess.run(
+                ["tasklist", "/fi", "imagename eq tailscaled.exe"],
+                capture_output=True, text=True, timeout=10
+            )
+            tailscaled_running = "tailscaled.exe" in result.stdout
+            
+            service_status = self.check_service_status()
+            ts_status = self.get_tailscale_status()
+            
+            # If we have processes but service/backend is stopped, it's likely manual shutdown
+            if (tailscale_running or tailscaled_running) and (
+                service_status == "stopped" or 
+                ts_status.get("BackendState") == "Stopped" or
+                ts_status.get("status") == "not_running"
+            ):
+                self.logger.warning("Detected potential manual shutdown (fallback detection)")
+                return True
+                
+            return False
+            
+        except Exception as e:
+            self.logger.debug(f"Fallback manual shutdown detection failed: {e}")
             return False
     
     def recovery_procedure(self, status_info):
@@ -432,10 +491,18 @@ class TailscaleMonitor:
         recovery_steps = []
         
         try:
-            # Step 1: Check for manual shutdown
-            if self.detect_manual_shutdown():
-                self.logger.info("Detected manual shutdown - will restart service")
+            # Step 1: Check for manual shutdown and handle it
+            manual_shutdown_detected = self.detect_manual_shutdown()
+            if manual_shutdown_detected:
+                self.logger.info("Detected manual shutdown - performing cleanup and restart")
                 recovery_steps.append("manual_shutdown_detected")
+                
+                # Kill any remaining processes
+                self._cleanup_tailscale_processes()
+                recovery_steps.append("process_cleanup")
+                
+                # Wait a moment for cleanup to complete
+                time.sleep(2)
             
             # Step 2: Check network connectivity
             if not self.check_network_connectivity():
@@ -458,9 +525,14 @@ class TailscaleMonitor:
                 if not self.start_service():
                     self.logger.error("Failed to start Tailscale service")
                     return False, recovery_steps
+            elif manual_shutdown_detected and service_status == "running":
+                # If service is running but we detected manual shutdown, restart it
+                self.logger.info("Restarting service after manual shutdown detection")
+                self._restart_service()
+                recovery_steps.append("service_restart")
             
             # Step 5: Check Tailscale status after service start
-            time.sleep(2)
+            time.sleep(3)  # Give more time for service to stabilize
             current_status = self.get_tailscale_status()
             
             # Step 6: Authenticate if needed
@@ -480,8 +552,12 @@ class TailscaleMonitor:
                     self.logger.error("Failed to authenticate Tailscale")
                     return False, recovery_steps
             
-            # Step 7: Final status check
-            time.sleep(3)
+            # Step 7: Final status check with extended wait for manual shutdown recovery
+            if manual_shutdown_detected:
+                time.sleep(5)  # Extra wait for manual shutdown recovery
+            else:
+                time.sleep(3)
+                
             final_status = self.get_tailscale_status()
             final_backend_state = final_status.get("BackendState", "Unknown")
             final_is_connected = final_status.get("is_connected", False)
@@ -496,7 +572,8 @@ class TailscaleMonitor:
             if recovery_successful:
                 device_name = final_status.get("device_name", "Unknown")
                 tailscale_ip = final_status.get("Self", {}).get("TailscaleIPs", ["Unknown"])[0]
-                self.logger.info(f"Recovery successful - Tailscale connected: {device_name} ({tailscale_ip})")
+                recovery_type = "manual_shutdown" if manual_shutdown_detected else "standard"
+                self.logger.info(f"Recovery successful ({recovery_type}) - Tailscale connected: {device_name} ({tailscale_ip})")
                 self.consecutive_failures = 0
                 self.last_successful_check = datetime.now()
                 recovery_steps.append("success")
@@ -510,6 +587,52 @@ class TailscaleMonitor:
             self.logger.error(f"Recovery procedure exception: {e}")
             recovery_steps.append("exception")
             return False, recovery_steps
+    
+    def _cleanup_tailscale_processes(self):
+        """Clean up any remaining Tailscale processes"""
+        try:
+            self.logger.info("Cleaning up Tailscale processes...")
+            
+            # Try to kill processes gracefully first
+            processes_to_kill = ["tailscale.exe", "tailscaled.exe"]
+            
+            for proc_name in processes_to_kill:
+                try:
+                    # Try graceful termination first
+                    subprocess.run(["taskkill", "/im", proc_name], 
+                                 capture_output=True, text=True, timeout=10)
+                    time.sleep(1)
+                    
+                    # Force kill if still running
+                    subprocess.run(["taskkill", "/f", "/im", proc_name], 
+                                 capture_output=True, text=True, timeout=10)
+                except Exception as e:
+                    self.logger.debug(f"Failed to kill {proc_name}: {e}")
+            
+            time.sleep(2)  # Wait for processes to fully terminate
+            
+        except Exception as e:
+            self.logger.error(f"Process cleanup failed: {e}")
+    
+    def _restart_service(self):
+        """Restart the Tailscale service"""
+        try:
+            self.logger.info("Restarting Tailscale service...")
+            
+            # Stop service
+            subprocess.run(["sc", "stop", Config.SERVICE_NAME], 
+                         capture_output=True, text=True, timeout=30)
+            time.sleep(3)
+            
+            # Start service
+            subprocess.run(["sc", "start", Config.SERVICE_NAME], 
+                         capture_output=True, text=True, timeout=30)
+            time.sleep(3)
+            
+            self.logger.info("Service restart completed")
+            
+        except Exception as e:
+            self.logger.error(f"Service restart failed: {e}")
     
     def perform_health_check(self):
         """Perform comprehensive health check"""
@@ -562,7 +685,9 @@ class TailscaleMonitor:
                 # Connection issues (has network but no valid auth/connection)
                 not health_status["auth_valid"] and health_status["network_connectivity"],
                 # Disconnected state (service running but no connection)
-                health_status["service_status"] == "running" and health_status["tailscale_status"] == "Running" and not health_status["auth_valid"]
+                health_status["service_status"] == "running" and health_status["tailscale_status"] == "Running" and not health_status["auth_valid"],
+                # Manual shutdown detection
+                self.detect_manual_shutdown()
             ]
             
             health_status["recovery_needed"] = any(recovery_conditions)
@@ -577,6 +702,8 @@ class TailscaleMonitor:
                 recovery_reasons.append("no_valid_connection")
             if health_status["service_status"] == "running" and health_status["tailscale_status"] == "Running" and not health_status["auth_valid"]:
                 recovery_reasons.append("disconnected_state")
+            if self.detect_manual_shutdown():
+                recovery_reasons.append("manual_shutdown_detected")
             
             health_status["recovery_reasons"] = recovery_reasons
             
@@ -779,11 +906,15 @@ def main():
         
         elif command == "init":
             # Initialize logging and test basic functionality
-            watchdog = TailscaleWatchdog()
-            watchdog.logger.info("Watchdog initialization test completed")
-            print("[OK] Watchdog initialized successfully")
-            print(f"Log file: {Config.LOG_FILE}")
-            sys.exit(0)
+            try:
+                watchdog = TailscaleWatchdog()
+                watchdog.logger.info("Watchdog initialization test completed")
+                print("[OK] Watchdog initialized successfully")
+                print(f"Log file: {Config.LOG_FILE}")
+                sys.exit(0)
+            except Exception as e:
+                print(f"[ERROR] Watchdog initialization failed: {e}")
+                sys.exit(1)
     
     # Default: run interactive mode
     print("ATT Tailscale Watchdog")

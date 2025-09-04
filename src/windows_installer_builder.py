@@ -594,37 +594,119 @@ class EnhancedInstaller:
         self.log("[BUILD] Installing Tailscale...")
         
         try:
+            # Check if Tailscale is already installed
+            if Path(self.tailscale_exe).exists():
+                self.log("[INFO] Tailscale already installed, checking version...")
+                try:
+                    result = subprocess.run(
+                        [self.tailscale_exe, "version"],
+                        capture_output=True, text=True, timeout=10
+                    )
+                    if result.returncode == 0:
+                        self.log(f"[INFO] Current version: {{result.stdout.strip()}}")
+                        self.log("[OK] Using existing Tailscale installation")
+                        return
+                except:
+                    pass
+            
+            # Stop any running Tailscale processes
+            self.log("[BUILD] Stopping existing Tailscale processes...")
+            try:
+                subprocess.run(["taskkill", "/f", "/im", "tailscale.exe"], 
+                             capture_output=True, text=True, timeout=30)
+                subprocess.run(["taskkill", "/f", "/im", "tailscaled.exe"], 
+                             capture_output=True, text=True, timeout=30)
+                time.sleep(2)
+            except:
+                pass
+            
             msi_log = os.path.join(os.environ.get('TEMP', '.'), 'tailscale_msi.log')
             
-            cmd = [
-                "msiexec.exe", "/i", msi_path,
-                "/quiet", "/norestart",
-                "TS_UNATTENDEDMODE=always",
-                "TS_INSTALLUPDATES=always",
-                "/l*v", msi_log
+            # Try installation with different parameters
+            install_attempts = [
+                # Attempt 1: Standard installation
+                [
+                    "msiexec.exe", "/i", msi_path,
+                    "/quiet", "/norestart",
+                    "TS_UNATTENDEDMODE=always",
+                    "TS_INSTALLUPDATES=always",
+                    "/l*v", msi_log
+                ],
+                # Attempt 2: Force reinstall
+                [
+                    "msiexec.exe", "/i", msi_path,
+                    "/quiet", "/norestart", "/force",
+                    "TS_UNATTENDEDMODE=always",
+                    "TS_INSTALLUPDATES=always",
+                    "/l*v", msi_log
+                ],
+                # Attempt 3: Without quiet mode for better error info
+                [
+                    "msiexec.exe", "/i", msi_path,
+                    "/norestart",
+                    "TS_UNATTENDEDMODE=always",
+                    "TS_INSTALLUPDATES=always",
+                    "/l*v", msi_log
+                ]
             ]
             
-            self.log("[BUILD] Running MSI installer...")
-            process = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            installation_success = False
+            last_error = None
             
-            if process.returncode != 0:
-                error_msg = f"MSI installation failed (exit {{process.returncode}})"
-                if process.stderr:
-                    error_msg += f": {{process.stderr}}"
-                raise Exception(error_msg)
+            for attempt, cmd in enumerate(install_attempts, 1):
+                self.log(f"[BUILD] Installation attempt {{attempt}}/{{len(install_attempts)}}...")
+                
+                try:
+                    process = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+                    
+                    if process.returncode == 0:
+                        self.log("[OK] Tailscale installation completed")
+                        installation_success = True
+                        break
+                    else:
+                        last_error = f"Attempt {{attempt}} failed (exit {{process.returncode}})"
+                        if process.stderr:
+                            last_error += f": {{process.stderr}}"
+                        self.log(f"[WARNING] {{last_error}}")
+                        
+                        # Check MSI log for more details
+                        if os.path.exists(msi_log):
+                            try:
+                                with open(msi_log, 'r', encoding='utf-8', errors='ignore') as f:
+                                    log_content = f.read()
+                                    if "1603" in log_content:
+                                        self.log("[INFO] MSI log shows error 1603 - trying next method...")
+                            except:
+                                pass
+                        
+                        if attempt < len(install_attempts):
+                            time.sleep(3)  # Wait before next attempt
+                            
+                except subprocess.TimeoutExpired:
+                    last_error = f"Attempt {{attempt}} timed out"
+                    self.log(f"[WARNING] {{last_error}}")
+                    if attempt < len(install_attempts):
+                        time.sleep(3)
+                except Exception as e:
+                    last_error = f"Attempt {{attempt}} exception: {{e}}"
+                    self.log(f"[WARNING] {{last_error}}")
+                    if attempt < len(install_attempts):
+                        time.sleep(3)
             
-            self.log("[OK] Tailscale installation completed")
+            if not installation_success:
+                raise Exception(f"All installation attempts failed. Last error: {{last_error}}")
+            
+            # Wait for MSI process to fully complete and release file handles
+            time.sleep(3)
             
             # Verify installation
             if not Path(self.tailscale_exe).exists():
                 time.sleep(5)
                 if not Path(self.tailscale_exe).exists():
-                    raise Exception("Tailscale executable not found")
+                    raise Exception("Tailscale executable not found after installation")
             
             self.log("[OK] Installation verified")
             
-        except subprocess.TimeoutExpired:
-            raise Exception("Installation timed out")
         except Exception as e:
             raise Exception(f"Installation failed: {{e}}")
     
@@ -643,12 +725,23 @@ class EnhancedInstaller:
             
             # Create a simple batch file to run the watchdog
             batch_file = self.watchdog_dir / "run_watchdog.bat"
-            with open(batch_file, 'w') as f:
-                f.write('@echo off\\n')
-                f.write(f'cd /d "{{self.watchdog_dir}}"\\n')
-                f.write(f'"{{sys.executable}}" "{{self.watchdog_script}}" service\\n')
-            
-            self.log(f"Watchdog batch file created: {{batch_file}}")
+            try:
+                with open(batch_file, 'w', encoding='utf-8') as f:
+                    f.write('@echo off\\n')
+                    f.write('cd /d "C:\\\\ProgramData\\\\ATT\\\\Watchdog"\\n')
+                    f.write('python "att_tailscale_watchdog.py" service\\n')
+                    f.write('pause\\n')
+                
+                self.log(f"Watchdog batch file created: {{batch_file}}")
+            except Exception as e:
+                self.log(f"Warning: Could not create batch file: {{e}}")
+                # Create a simpler version
+                try:
+                    with open(batch_file, 'w') as f:
+                        f.write('python att_tailscale_watchdog.py service\\n')
+                    self.log(f"Simple batch file created: {{batch_file}}")
+                except:
+                    self.log("Failed to create batch file")
             
             # Create config file in the correct location
             config = {{
@@ -672,8 +765,12 @@ class EnhancedInstaller:
             
             # Test watchdog initialization to ensure logging works
             try:
+                # Wait a moment for file system to settle
+                time.sleep(1)
+                
+                # Test by running the watchdog script directly with Python
                 test_cmd = [sys.executable, str(self.watchdog_script), "init"]
-                test_result = subprocess.run(test_cmd, capture_output=True, text=True, timeout=30)
+                test_result = subprocess.run(test_cmd, capture_output=True, text=True, timeout=10)
                 if test_result.returncode == 0:
                     self.log("[OK] Watchdog initialization test passed")
                 else:
@@ -773,8 +870,25 @@ class EnhancedInstaller:
     def cleanup_temp_files(self, msi_path):
         try:
             if os.path.exists(msi_path):
-                os.unlink(msi_path)
-                self.log("[OK] Temporary files cleaned")
+                # Wait a bit for any processes to release the file
+                time.sleep(2)
+                
+                # Try to delete the file with retries
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        os.unlink(msi_path)
+                        self.log("[OK] Temporary files cleaned")
+                        return
+                    except PermissionError:
+                        if attempt < max_retries - 1:
+                            self.log(f"File in use, retrying in 2 seconds... (attempt {{attempt + 1}})")
+                            time.sleep(2)
+                        else:
+                            self.log(f"Cleanup warning: Could not delete {{msi_path}} - file may be in use by another process")
+                    except Exception as e:
+                        self.log(f"Cleanup warning: {{e}}")
+                        break
         except Exception as e:
             self.log(f"Cleanup warning: {{e}}")
     
